@@ -3,7 +3,7 @@
 // Use local CORS proxy (/api/...) when available (Cloudflare Pages Functions),
 // fall back to direct API access for environments where CORS isn't an issue.
 const API_BASE = '/api';
-const RATE_LIMIT_MS = 200; // Minimum delay between API requests
+const RATE_LIMIT_MS = 20; // Minimum delay between API requests
 
 // ── State ──
 
