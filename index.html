@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camdram Connected</title>
+    <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Camdram Connected</h1>
+            <p class="subtitle">Find the connection between any two people in Cambridge theatre</p>
+        </header>
+
+        <div class="search-panel">
+            <div class="input-group">
+                <label for="person1">Person 1</label>
+                <div class="autocomplete-wrapper">
+                    <input type="text" id="person1" placeholder="Start typing a name..." autocomplete="off">
+                    <div class="autocomplete-list" id="person1-list"></div>
+                </div>
+                <input type="hidden" id="person1-slug">
+            </div>
+            <div class="input-group">
+                <label for="person2">Person 2</label>
+                <div class="autocomplete-wrapper">
+                    <input type="text" id="person2" placeholder="Start typing a name..." autocomplete="off">
+                    <div class="autocomplete-list" id="person2-list"></div>
+                </div>
+                <input type="hidden" id="person2-slug">
+            </div>
+            <div class="filters">
+                <fieldset>
+                    <legend>Role types</legend>
+                    <label><input type="checkbox" value="cast" checked> Cast</label>
+                    <label><input type="checkbox" value="prod" checked> Crew/Production</label>
+                    <label><input type="checkbox" value="band" checked> Band</label>
+                </fieldset>
+                <div class="depth-control">
+                    <label for="max-depth">Max degrees of separation</label>
+                    <select id="max-depth">
+                        <option value="1">1 (direct only)</option>
+                        <option value="2" selected>2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                    </select>
+                </div>
+            </div>
+            <button id="find-btn" disabled>Find Connection</button>
+        </div>
+
+        <div id="status" class="status hidden"></div>
+
+        <div id="progress-container" class="progress-container hidden">
+            <div class="progress-header">
+                <span id="progress-depth"></span>
+                <span class="progress-counters">
+                    <span id="progress-shows">0 shows</span>
+                    <span id="progress-paths">0 paths</span>
+                </span>
+            </div>
+            <div class="progress-bar-track">
+                <div class="progress-bar-fill" id="progress-bar"></div>
+            </div>
+            <div class="progress-log" id="progress-log"></div>
+        </div>
+
+        <div id="results" class="hidden">
+            <div class="results-header">
+                <div id="degrees-badge" class="degrees-badge"></div>
+                <div class="results-actions">
+                    <button id="export-btn" title="Export graph as PNG">Export PNG</button>
+                    <button id="share-btn" title="Copy shareable link">Share Link</button>
+                </div>
+            </div>
+            <div id="graph-container"></div>
+            <div id="details-panel">
+                <h3>Connection Details</h3>
+                <div id="details-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
