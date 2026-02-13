@@ -47,6 +47,9 @@
                         <option value="4">4</option>
                     </select>
                 </div>
+                <label class="shortest-only-control">
+                    <input type="checkbox" id="shortest-only"> Shortest path only
+                </label>
             </div>
             <button id="find-btn" disabled>Find Connection</button>
         </div>
@@ -58,6 +61,7 @@
                 <span id="progress-depth"></span>
                 <span class="progress-counters">
                     <span id="progress-shows">0 shows</span>
+                    <span id="progress-cache">0 cached</span>
                     <span id="progress-paths">0 paths</span>
                 </span>
             </div>

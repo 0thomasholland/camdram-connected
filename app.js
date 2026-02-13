@@ -3,12 +3,88 @@
 // Use local CORS proxy (/api/...) when available (Cloudflare Pages Functions),
 // fall back to direct API access for environments where CORS isn't an issue.
 const API_BASE = '/api';
-const RATE_LIMIT_MS = 20; // Minimum delay between API requests
+
+// ── Fetch pool with concurrency, rate limiting, and retry ──
+
+const CONCURRENCY = 4;
+const MIN_GAP_MS = 50;
+const MAX_RETRIES = 3;
+const BASE_RETRY_MS = 200;
+
+class FetchPool {
+    constructor() {
+        this._inFlight = 0;
+        this._queue = [];
+        this._lastStartTime = 0;
+    }
+
+    fetch(url) {
+        return new Promise((resolve, reject) => {
+            const task = { url, resolve, reject };
+            if (this._inFlight < CONCURRENCY) {
+                this._run(task);
+            } else {
+                this._queue.push(task);
+            }
+        });
+    }
+
+    async _run(task) {
+        this._inFlight++;
+        try {
+            // Enforce minimum gap between request starts
+            const now = Date.now();
+            const elapsed = now - this._lastStartTime;
+            if (elapsed < MIN_GAP_MS) {
+                await new Promise(r => setTimeout(r, MIN_GAP_MS - elapsed));
+            }
+            this._lastStartTime = Date.now();
+
+            const result = await this._fetchWithRetry(task.url);
+            task.resolve(result);
+        } catch (err) {
+            task.reject(err);
+        } finally {
+            this._inFlight--;
+            this._dequeue();
+        }
+    }
+
+    async _fetchWithRetry(url) {
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            const resp = await fetch(url);
+            if (resp.status === 429 && attempt < MAX_RETRIES) {
+                const delay = BASE_RETRY_MS * Math.pow(2, attempt);
+                await new Promise(r => setTimeout(r, delay));
+                continue;
+            }
+            if (!resp.ok) {
+                if (resp.status === 404) return null;
+                throw new Error(`API error ${resp.status} for ${url}`);
+            }
+            return resp.json();
+        }
+    }
+
+    _dequeue() {
+        if (this._queue.length > 0 && this._inFlight < CONCURRENCY) {
+            const next = this._queue.shift();
+            this._run(next);
+        }
+    }
+}
+
+const pool = new FetchPool();
 
 // ── State ──
 
 let network = null;
-let lastRequestTime = 0;
+
+// Persistent caches (survive across searches)
+const personRolesCache = new Map(); // slug -> raw roles[] (unfiltered)
+const showRolesCache = new Map();   // slug -> raw roles[] (unfiltered)
+const peopleNames = new Map();      // slug -> display name
+let cacheHits = 0;
 
 // ── DOM refs ──
 
@@ -27,44 +103,30 @@ const detailsContent = document.getElementById('details-content');
 const exportBtn = document.getElementById('export-btn');
 const shareBtn = document.getElementById('share-btn');
 const maxDepthSelect = document.getElementById('max-depth');
+const shortestOnlyCheckbox = document.getElementById('shortest-only');
 const progressContainer = document.getElementById('progress-container');
 const progressBar = document.getElementById('progress-bar');
 const progressLog = document.getElementById('progress-log');
 const progressDepthEl = document.getElementById('progress-depth');
 const progressShowsEl = document.getElementById('progress-shows');
+const progressCacheEl = document.getElementById('progress-cache');
 const progressPathsEl = document.getElementById('progress-paths');
 
 // ── API layer ──
 
-async function rateLimitedFetch(url) {
-    const now = Date.now();
-    const elapsed = now - lastRequestTime;
-    if (elapsed < RATE_LIMIT_MS) {
-        await new Promise(r => setTimeout(r, RATE_LIMIT_MS - elapsed));
-    }
-    lastRequestTime = Date.now();
-
-    const resp = await fetch(url);
-    if (!resp.ok) {
-        if (resp.status === 404) return null;
-        throw new Error(`API error ${resp.status} for ${url}`);
-    }
-    return resp.json();
-}
-
 async function searchPeople(query) {
     if (query.length < 2) return [];
-    const data = await rateLimitedFetch(`${API_BASE}/people.json?q=${encodeURIComponent(query)}`);
+    const data = await pool.fetch(`${API_BASE}/people.json?q=${encodeURIComponent(query)}`);
     return data || [];
 }
 
 async function getPersonRoles(slug) {
-    const data = await rateLimitedFetch(`${API_BASE}/people/${encodeURIComponent(slug)}/roles.json`);
+    const data = await pool.fetch(`${API_BASE}/people/${encodeURIComponent(slug)}/roles.json`);
     return data || [];
 }
 
 async function getShowRoles(slug) {
-    const data = await rateLimitedFetch(`${API_BASE}/shows/${encodeURIComponent(slug)}/roles.json`);
+    const data = await pool.fetch(`${API_BASE}/shows/${encodeURIComponent(slug)}/roles.json`);
     return data || [];
 }
 
@@ -179,16 +241,19 @@ function resetProgress() {
     progressBar.style.width = '0%';
     progressDepthEl.textContent = '';
     progressShowsEl.textContent = '0 shows';
+    progressCacheEl.textContent = '0 cached';
     progressPathsEl.textContent = '0 paths';
+    cacheHits = 0;
 }
 
 function hideProgress() {
     progressContainer.classList.add('hidden');
 }
 
-function updateProgress(depth, maxDepth, current, total, showCount, pathCount) {
-    progressDepthEl.textContent = `Depth ${depth}/${maxDepth} — ${current}/${total} people`;
+function updateProgress(depthLabel, current, total, showCount, pathCount) {
+    progressDepthEl.textContent = `${depthLabel} — ${current}/${total} people`;
     progressShowsEl.textContent = `${showCount} show${showCount !== 1 ? 's' : ''}`;
+    progressCacheEl.textContent = `${cacheHits} cached`;
     progressPathsEl.textContent = `${pathCount} path${pathCount !== 1 ? 's' : ''}`;
     const pct = total > 0 ? (current / total) * 100 : 0;
     progressBar.style.width = `${pct}%`;
@@ -202,7 +267,7 @@ function logFetch(message, type = '') {
     progressLog.scrollTop = progressLog.scrollHeight;
 }
 
-// ── Connection finder (BFS) ──
+// ── Shared helpers for BFS ──
 
 function getActiveRoleTypes() {
     return Array.from(document.querySelectorAll('.filters fieldset input:checked'))
@@ -210,53 +275,126 @@ function getActiveRoleTypes() {
 }
 
 /**
- * BFS to find ALL paths between two people up to maxDepth degrees.
- *
- * Graph is discovered lazily: for each person we fetch their roles to find
- * which shows they've been in, then for each show we fetch that show's roles
- * to find other people (neighbors).
- *
- * Unlike a standard BFS that stops at the first match, this continues through
- * all depths up to maxDepth, collecting every path that reaches the target.
- * The target person is never added to the visited set so multiple paths can
- * reach them at different depths.
- *
- * Returns { paths, peopleNames } where:
- *   paths = [{ path: [slug1, ...], edges: [{from, to, shows}] }]
+ * Fetches and caches a person's roles, returns filtered by roleTypes.
+ * Uses persistent module-level cache; stores raw unfiltered data.
  */
-async function findAllConnections(slug1, slug2, maxDepth) {
-    const roleTypes = getActiveRoleTypes();
-    if (roleTypes.length === 0) {
-        throw new Error('Select at least one role type');
+async function getCachedPersonRoles(personSlug, roleTypes) {
+    let raw;
+    if (personRolesCache.has(personSlug)) {
+        raw = personRolesCache.get(personSlug);
+        cacheHits++;
+    } else {
+        raw = await getPersonRoles(personSlug);
+        personRolesCache.set(personSlug, raw);
+    }
+    const filtered = raw.filter(r => roleTypes.includes(r.type));
+    if (filtered.length > 0) {
+        peopleNames.set(personSlug, filtered[0].person.name);
+    }
+    return filtered;
+}
+
+/**
+ * Fetches and caches a show's roles, returns filtered by roleTypes.
+ * Uses persistent module-level cache; stores raw unfiltered data.
+ */
+async function getCachedShowRoles(showSlug, roleTypes) {
+    let raw;
+    if (showRolesCache.has(showSlug)) {
+        raw = showRolesCache.get(showSlug);
+        cacheHits++;
+    } else {
+        raw = await getShowRoles(showSlug);
+        showRolesCache.set(showSlug, raw);
+    }
+    return raw.filter(r => roleTypes.includes(r.type));
+}
+
+/**
+ * Expand a person: fetch their roles, group by show, fetch all shows in parallel,
+ * build a map of coworkers with shared show info.
+ *
+ * Returns Map<coSlug, {shows: [{showSlug, showName, fromRoles: Set, toRoles: Set}]}>
+ */
+async function expandPerson(personSlug, roleTypes, progressCallback) {
+    const wasCached = personRolesCache.has(personSlug);
+    const roles = await getCachedPersonRoles(personSlug, roleTypes);
+    const personName = peopleNames.get(personSlug) || personSlug;
+
+    if (!wasCached) {
+        logFetch(`Fetched roles for ${personName} (${roles.length} roles)`);
     }
 
-    // Cache to avoid refetching
-    const personRolesCache = new Map(); // slug -> roles[]
-    const showRolesCache = new Map();   // slug -> roles[]
+    // Group by show
+    const showMap = new Map();
+    for (const r of roles) {
+        const key = r.show.slug;
+        if (!showMap.has(key)) showMap.set(key, { show: r.show, roles: [] });
+        showMap.get(key).roles.push(r);
+    }
 
-    // People metadata for display
-    const peopleNames = new Map();
+    // Fetch all shows in parallel (pool throttles naturally)
+    const showEntries = Array.from(showMap.entries());
+    const showRolesResults = await Promise.all(
+        showEntries.map(async ([showSlug, showData]) => {
+            const showCached = showRolesCache.has(showSlug);
+            const showRoles = await getCachedShowRoles(showSlug, roleTypes);
+            if (!showCached) {
+                logFetch(`Fetched ${showData.show.name} (${showRoles.length} people)`);
+                if (progressCallback) progressCallback();
+            }
+            return { showSlug, showData, showRoles };
+        })
+    );
 
-    async function getPersonShowsAndRoles(personSlug) {
-        if (personRolesCache.has(personSlug)) return personRolesCache.get(personSlug);
-        const roles = await getPersonRoles(personSlug);
-        const filtered = roles.filter(r => roleTypes.includes(r.type));
-        personRolesCache.set(personSlug, filtered);
-        if (filtered.length > 0) {
-            peopleNames.set(personSlug, filtered[0].person.name);
+    // Build coworker connections
+    const connectionsByCoworker = new Map(); // coSlug -> Map<showSlug, showInfo>
+    for (const { showSlug, showData, showRoles } of showRolesResults) {
+        for (const r of showRoles) {
+            if (r.person.slug === personSlug) continue;
+
+            const coSlug = r.person.slug;
+            peopleNames.set(coSlug, r.person.name);
+
+            if (!connectionsByCoworker.has(coSlug)) {
+                connectionsByCoworker.set(coSlug, new Map());
+            }
+            const showConns = connectionsByCoworker.get(coSlug);
+            if (!showConns.has(showSlug)) {
+                showConns.set(showSlug, {
+                    showSlug,
+                    showName: showData.show.name,
+                    fromRoles: new Set(),
+                    toRoles: new Set(),
+                });
+            }
+            const conn = showConns.get(showSlug);
+            for (const role of showData.roles) conn.fromRoles.add(role.role);
+            conn.toRoles.add(r.role);
         }
-        return filtered;
     }
 
-    async function getShowPeople(showSlug) {
-        if (showRolesCache.has(showSlug)) return showRolesCache.get(showSlug);
-        const roles = await getShowRoles(showSlug);
-        const filtered = roles.filter(r => roleTypes.includes(r.type));
-        showRolesCache.set(showSlug, filtered);
-        return filtered;
-    }
+    return connectionsByCoworker;
+}
 
-    // BFS — collect all paths, don't stop at first match
+/**
+ * Convert a coworker connection map entry to an edge object.
+ */
+function buildEdge(fromSlug, toSlug, showConnsMap) {
+    const shows = Array.from(showConnsMap.values()).map(s => ({
+        showSlug: s.showSlug,
+        showName: s.showName,
+        fromRole: Array.from(s.fromRoles).join(', '),
+        toRole: Array.from(s.toRoles).join(', '),
+    }));
+    return { from: fromSlug, to: toSlug, shows };
+}
+
+// ── Connection finder — all paths (unidirectional BFS) ──
+
+async function findAllUnidirectional(slug1, slug2, maxDepth) {
+    const roleTypes = getActiveRoleTypes();
+
     const allPaths = [];
     const visited = new Set([slug1]);
     let queue = [{ personSlug: slug1, path: [slug1], edges: [] }];
@@ -267,94 +405,58 @@ async function findAllConnections(slug1, slug2, maxDepth) {
         const nextQueue = [];
         let peopleExplored = 0;
         const totalAtDepth = queue.length;
-        updateProgress(depth + 1, maxDepth, 0, totalAtDepth, showsFetched, allPaths.length);
+        const depthLabel = `Depth ${depth + 1}/${maxDepth}`;
+        updateProgress(depthLabel, 0, totalAtDepth, showsFetched, allPaths.length);
 
-        for (const entry of queue) {
-            const personName = peopleNames.get(entry.personSlug) || entry.personSlug;
-            const wasCached = personRolesCache.has(entry.personSlug);
-            const roles = await getPersonShowsAndRoles(entry.personSlug);
-            if (!wasCached) {
-                logFetch(`Fetched roles for ${personName} (${roles.length} roles)`);
-            }
+        // Process people in parallel batches of 3
+        const BATCH_SIZE = 3;
+        for (let i = 0; i < queue.length; i += BATCH_SIZE) {
+            const batch = queue.slice(i, i + BATCH_SIZE);
 
-            // Group by show
-            const showMap = new Map();
-            for (const r of roles) {
-                const key = r.show.slug;
-                if (!showMap.has(key)) showMap.set(key, { show: r.show, roles: [] });
-                showMap.get(key).roles.push(r);
-            }
+            const batchResults = await Promise.all(
+                batch.map(async (entry) => {
+                    const connectionsByCoworker = await expandPerson(
+                        entry.personSlug,
+                        roleTypes,
+                        () => {
+                            showsFetched++;
+                            updateProgress(depthLabel, peopleExplored, totalAtDepth, showsFetched, allPaths.length);
+                        }
+                    );
+                    return { entry, connectionsByCoworker };
+                })
+            );
 
-            // Collect all connections from this person across all their shows.
-            // Groups by coworker so that multiple shared shows become one edge.
-            const connectionsByCoworker = new Map(); // coSlug -> Map<showSlug, showInfo>
+            // Sequential merge for visited-set safety
+            for (const { entry, connectionsByCoworker } of batchResults) {
+                for (const [coSlug, showConnsMap] of connectionsByCoworker) {
+                    const newEdge = buildEdge(entry.personSlug, coSlug, showConnsMap);
+                    const newEdges = [...entry.edges, newEdge];
 
-            for (const [showSlug, showData] of showMap) {
-                const showCached = showRolesCache.has(showSlug);
-                const showRoles = await getShowPeople(showSlug);
-                if (!showCached) {
-                    showsFetched++;
-                    logFetch(`Fetched ${showData.show.name} (${showRoles.length} people)`);
-                    updateProgress(depth + 1, maxDepth, peopleExplored, totalAtDepth, showsFetched, allPaths.length);
-                }
-
-                for (const r of showRoles) {
-                    if (r.person.slug === entry.personSlug) continue;
-
-                    const coSlug = r.person.slug;
-                    peopleNames.set(coSlug, r.person.name);
-
-                    if (!connectionsByCoworker.has(coSlug)) {
-                        connectionsByCoworker.set(coSlug, new Map());
-                    }
-                    const showConns = connectionsByCoworker.get(coSlug);
-                    if (!showConns.has(showSlug)) {
-                        showConns.set(showSlug, {
-                            showSlug,
-                            showName: showData.show.name,
-                            fromRoles: new Set(),
-                            toRoles: new Set(),
+                    if (coSlug === slug2) {
+                        allPaths.push({
+                            path: [...entry.path, coSlug],
+                            edges: newEdges,
+                        });
+                        const pathNames = [...entry.path, coSlug].map(s => peopleNames.get(s) || s).join(' → ');
+                        logFetch(`Found path: ${pathNames}`, 'found');
+                    } else if (!visited.has(coSlug)) {
+                        visited.add(coSlug);
+                        nextQueue.push({
+                            personSlug: coSlug,
+                            path: [...entry.path, coSlug],
+                            edges: newEdges,
                         });
                     }
-                    const conn = showConns.get(showSlug);
-                    for (const role of showData.roles) conn.fromRoles.add(role.role);
-                    conn.toRoles.add(r.role);
                 }
+
+                peopleExplored++;
+                updateProgress(depthLabel, peopleExplored, totalAtDepth, showsFetched, allPaths.length);
             }
-
-            // Build edges and either record a completed path or enqueue for next depth
-            for (const [coSlug, showConnsMap] of connectionsByCoworker) {
-                const shows = Array.from(showConnsMap.values()).map(s => ({
-                    showSlug: s.showSlug,
-                    showName: s.showName,
-                    fromRole: Array.from(s.fromRoles).join(', '),
-                    toRole: Array.from(s.toRoles).join(', '),
-                }));
-
-                const newEdge = { from: entry.personSlug, to: coSlug, shows };
-                const newEdges = [...entry.edges, newEdge];
-
-                if (coSlug === slug2) {
-                    // Found a path — record it but keep searching
-                    allPaths.push({
-                        path: [...entry.path, coSlug],
-                        edges: newEdges,
-                    });
-                    const pathNames = [...entry.path, coSlug].map(s => peopleNames.get(s) || s).join(' → ');
-                    logFetch(`Found path: ${pathNames}`, 'found');
-                } else if (!visited.has(coSlug)) {
-                    visited.add(coSlug);
-                    nextQueue.push({
-                        personSlug: coSlug,
-                        path: [...entry.path, coSlug],
-                        edges: newEdges,
-                    });
-                }
-            }
-
-            peopleExplored++;
-            updateProgress(depth + 1, maxDepth, peopleExplored, totalAtDepth, showsFetched, allPaths.length);
         }
+
+        // Early termination: if we found paths at this depth, stop
+        if (allPaths.length > 0) break;
 
         queue = nextQueue;
         if (queue.length === 0) break;
@@ -364,10 +466,174 @@ async function findAllConnections(slug1, slug2, maxDepth) {
     return { paths: allPaths, peopleNames };
 }
 
+// ── Connection finder — shortest path (bidirectional BFS) ──
+
+async function findShortestBidirectional(slug1, slug2, maxDepth) {
+    const roleTypes = getActiveRoleTypes();
+
+    // Forward: slug1 → slug2, Backward: slug2 → slug1
+    let forwardFrontier = [slug1];
+    let backwardFrontier = [slug2];
+
+    const forwardVisited = new Set([slug1]);
+    const backwardVisited = new Set([slug2]);
+
+    // Path maps: slug -> [{path: [slugs...], edges: [edge...]}]
+    const forwardPaths = new Map();
+    forwardPaths.set(slug1, [{ path: [slug1], edges: [] }]);
+    const backwardPaths = new Map();
+    backwardPaths.set(slug2, [{ path: [slug2], edges: [] }]);
+
+    let showsFetched = 0;
+    const foundPaths = [];
+    let totalDepth = 0;
+
+    for (let depth = 0; depth < maxDepth; depth++) {
+        totalDepth = depth + 1;
+
+        // Choose smaller frontier to expand
+        const expandForward = forwardFrontier.length <= backwardFrontier.length;
+        const frontier = expandForward ? forwardFrontier : backwardFrontier;
+        const visited = expandForward ? forwardVisited : backwardVisited;
+        const paths = expandForward ? forwardPaths : backwardPaths;
+        const oppositePaths = expandForward ? backwardPaths : forwardPaths;
+        const direction = expandForward ? 'Forward' : 'Backward';
+
+        const depthLabel = `${direction} depth ${depth + 1}/${maxDepth}`;
+        const totalAtDepth = frontier.length;
+        let peopleExplored = 0;
+        updateProgress(depthLabel, 0, totalAtDepth, showsFetched, foundPaths.length);
+
+        const nextFrontier = [];
+
+        // Process in parallel batches
+        const BATCH_SIZE = 3;
+        for (let i = 0; i < frontier.length; i += BATCH_SIZE) {
+            const batch = frontier.slice(i, i + BATCH_SIZE);
+
+            const batchResults = await Promise.all(
+                batch.map(async (personSlug) => {
+                    const connectionsByCoworker = await expandPerson(
+                        personSlug,
+                        roleTypes,
+                        () => {
+                            showsFetched++;
+                            updateProgress(depthLabel, peopleExplored, totalAtDepth, showsFetched, foundPaths.length);
+                        }
+                    );
+                    return { personSlug, connectionsByCoworker };
+                })
+            );
+
+            // Sequential merge
+            for (const { personSlug, connectionsByCoworker } of batchResults) {
+                const currentPathsForPerson = paths.get(personSlug) || [];
+
+                for (const [coSlug, showConnsMap] of connectionsByCoworker) {
+                    const edge = buildEdge(personSlug, coSlug, showConnsMap);
+
+                    // Build new partial paths to coSlug
+                    const newPartials = currentPathsForPerson.map(p => ({
+                        path: [...p.path, coSlug],
+                        edges: [...p.edges, edge],
+                    }));
+
+                    // Check if coSlug is in the opposite frontier's visited set
+                    if (oppositePaths.has(coSlug)) {
+                        // Connection found! Combine paths
+                        for (const fwd of newPartials) {
+                            for (const bwd of oppositePaths.get(coSlug)) {
+                                const combined = expandForward
+                                    ? combinePaths(fwd, bwd)
+                                    : combinePaths(bwd, fwd);
+                                foundPaths.push(combined);
+                                const pathNames = combined.path.map(s => peopleNames.get(s) || s).join(' → ');
+                                logFetch(`Found path: ${pathNames}`, 'found');
+                            }
+                        }
+                    }
+
+                    // Add to frontier if not visited (don't add target to visited in either direction)
+                    if (!visited.has(coSlug)) {
+                        visited.add(coSlug);
+                        nextFrontier.push(coSlug);
+                        paths.set(coSlug, newPartials);
+                    } else if (paths.has(coSlug)) {
+                        // Already visited but we store additional paths
+                        // (only relevant for multiple shortest paths)
+                        // Skip — first visit captures the shortest
+                    }
+                }
+
+                peopleExplored++;
+                updateProgress(depthLabel, peopleExplored, totalAtDepth, showsFetched, foundPaths.length);
+            }
+        }
+
+        // If we found paths, stop
+        if (foundPaths.length > 0) break;
+
+        if (expandForward) {
+            forwardFrontier = nextFrontier;
+        } else {
+            backwardFrontier = nextFrontier;
+        }
+
+        if (forwardFrontier.length === 0 && backwardFrontier.length === 0) break;
+    }
+
+    if (foundPaths.length === 0) return null;
+    return { paths: foundPaths, peopleNames };
+}
+
+/**
+ * Combine a forward partial path and a backward partial path that meet at a node.
+ * The backward path is reversed so the combined path goes slug1 → ... → slug2.
+ * Backward edges have their from/to and fromRole/toRole swapped.
+ */
+function combinePaths(forward, backward) {
+    // backward.path is [slug2, ..., meetingPoint]
+    // We need to reverse it and drop the meeting point (it's already in forward.path)
+    const reversedBackPath = backward.path.slice(0, -1).reverse();
+    const combinedPath = [...forward.path, ...reversedBackPath];
+
+    // Reverse backward edges and swap from/to
+    const reversedBackEdges = backward.edges.slice().reverse().map(e => ({
+        from: e.to,
+        to: e.from,
+        shows: e.shows.map(s => ({
+            showSlug: s.showSlug,
+            showName: s.showName,
+            fromRole: s.toRole,
+            toRole: s.fromRole,
+        })),
+    }));
+
+    return {
+        path: combinedPath,
+        edges: [...forward.edges, ...reversedBackEdges],
+    };
+}
+
+// ── Connection finder dispatcher ──
+
+async function findAllConnections(slug1, slug2, maxDepth) {
+    const roleTypes = getActiveRoleTypes();
+    if (roleTypes.length === 0) {
+        throw new Error('Select at least one role type');
+    }
+
+    if (shortestOnlyCheckbox.checked) {
+        return findShortestBidirectional(slug1, slug2, maxDepth);
+    } else {
+        return findAllUnidirectional(slug1, slug2, maxDepth);
+    }
+}
+
 // ── Graph visualization ──
 
 function renderGraph(result) {
-    const { paths, peopleNames } = result;
+    const { paths, peopleNames: pNames } = result;
 
     const startSlug = paths[0].path[0];
     const endSlug = paths[0].path[paths[0].path.length - 1];
@@ -384,7 +650,7 @@ function renderGraph(result) {
             if (nodeIds.has(nodeId)) continue;
             nodeIds.add(nodeId);
 
-            const name = peopleNames.get(slug) || slug;
+            const name = pNames.get(slug) || slug;
             const isEndpoint = slug === startSlug || slug === endSlug;
             nodeData.push({
                 id: nodeId,
@@ -433,7 +699,7 @@ function renderGraph(result) {
                         to: showId,
                         color: { color: '#3b3d54', highlight: '#6c63ff' },
                         width: 1.5,
-                        title: `${peopleNames.get(edge.from)}: ${show.fromRole}`,
+                        title: `${pNames.get(edge.from)}: ${show.fromRole}`,
                     });
                 }
 
@@ -445,7 +711,7 @@ function renderGraph(result) {
                         to: `person:${edge.to}`,
                         color: { color: '#3b3d54', highlight: '#6c63ff' },
                         width: 1.5,
-                        title: `${peopleNames.get(edge.to)}: ${show.toRole}`,
+                        title: `${pNames.get(edge.to)}: ${show.toRole}`,
                     });
                 }
             }
@@ -484,7 +750,7 @@ function renderGraph(result) {
 // ── Details panel ──
 
 function renderDetails(result) {
-    const { paths, peopleNames } = result;
+    const { paths, peopleNames: pNames } = result;
 
     // Group paths by degree
     const byDegree = new Map();
@@ -504,13 +770,13 @@ function renderDetails(result) {
 
         for (const { path, edges } of degreePaths) {
             html += `<div class="connection-path">`;
-            html += `<div class="path-summary">${path.map(s => escapeHtml(peopleNames.get(s) || s)).join(' &rarr; ')}</div>`;
+            html += `<div class="path-summary">${path.map(s => escapeHtml(pNames.get(s) || s)).join(' &rarr; ')}</div>`;
 
             for (let i = 0; i < path.length - 1; i++) {
                 const fromSlug = path[i];
                 const toSlug = path[i + 1];
-                const fromName = peopleNames.get(fromSlug) || fromSlug;
-                const toName = peopleNames.get(toSlug) || toSlug;
+                const fromName = pNames.get(fromSlug) || fromSlug;
+                const toName = pNames.get(toSlug) || toSlug;
 
                 const edge = edges.find(e =>
                     (e.from === fromSlug && e.to === toSlug) ||
@@ -592,6 +858,11 @@ findBtn.addEventListener('click', async () => {
         url.searchParams.set('p1', slug1);
         url.searchParams.set('p2', slug2);
         url.searchParams.set('d', maxDepth);
+        if (shortestOnlyCheckbox.checked) {
+            url.searchParams.set('sp', '1');
+        } else {
+            url.searchParams.delete('sp');
+        }
         history.replaceState(null, '', url);
 
     } catch (err) {
@@ -624,6 +895,11 @@ shareBtn.addEventListener('click', () => {
     url.searchParams.set('p1', person1Slug.value);
     url.searchParams.set('p2', person2Slug.value);
     url.searchParams.set('d', maxDepthSelect.value);
+    if (shortestOnlyCheckbox.checked) {
+        url.searchParams.set('sp', '1');
+    } else {
+        url.searchParams.delete('sp');
+    }
     navigator.clipboard.writeText(url.toString()).then(() => {
         shareBtn.textContent = 'Copied!';
         setTimeout(() => { shareBtn.textContent = 'Share Link'; }, 1500);
@@ -637,17 +913,19 @@ async function loadFromURL() {
     const p1 = params.get('p1');
     const p2 = params.get('p2');
     const depth = params.get('d');
+    const sp = params.get('sp');
 
     if (!p1 || !p2) return;
 
     if (depth) maxDepthSelect.value = depth;
+    if (sp === '1') shortestOnlyCheckbox.checked = true;
 
     showStatus('Loading people from URL...');
 
     try {
         const [data1, data2] = await Promise.all([
-            rateLimitedFetch(`${API_BASE}/people/${encodeURIComponent(p1)}.json`),
-            rateLimitedFetch(`${API_BASE}/people/${encodeURIComponent(p2)}.json`),
+            pool.fetch(`${API_BASE}/people/${encodeURIComponent(p1)}.json`),
+            pool.fetch(`${API_BASE}/people/${encodeURIComponent(p2)}.json`),
         ]);
 
         if (data1) {
