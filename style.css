@@ -508,6 +508,8 @@ fieldset label {
     margin-bottom: 0.6rem;
     background: var(--bg);
     border-radius: 0 4px 4px 0;
+    scroll-margin-top: 1.5rem;
+    transition: box-shadow 0.2s ease, background-color 0.2s ease;
 }
 
 .connection-step:last-child {
@@ -565,6 +567,7 @@ fieldset label {
     transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
     overflow: hidden;
     min-width: 0;
+    scroll-margin-top: 1.5rem;
 }
 
 .connection-path:hover,
@@ -572,6 +575,12 @@ fieldset label {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-glow);
     transform: translateY(-1px);
+}
+
+.connection-path.detail-focus,
+.connection-step.detail-focus {
+    box-shadow: 0 0 0 4px rgba(236, 103, 54, 0.18);
+    background: rgba(236, 103, 54, 0.08);
 }
 
 .path-summary {

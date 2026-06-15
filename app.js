@@ -3,6 +3,7 @@
 // Use local CORS proxy (/api/...) when available (Cloudflare Pages Functions),
 // fall back to direct API access for environments where CORS isn't an issue.
 const API_BASE = '/api';
+const CAMDRAM_SITE_BASE = 'https://www.camdram.net';
 
 // ── Fetch pool with concurrency, rate limiting, and retry ──
 
@@ -108,6 +109,8 @@ let cacheHits = 0;
 let currentSearchToken = 0;
 let currentHighlightedPath = null;
 let graphState = null;
+let graphDefaultView = null;
+let detailFocusTimer = null;
 
 // ── DOM refs ──
 
@@ -602,6 +605,13 @@ function pathRepeatsShow(edges) {
     return false;
 }
 
+function formatEdgeTitle(edge) {
+    if (edge.shows.length <= 2) {
+        return edge.shows.map(show => show.showName).join(' and ');
+    }
+    return `${edge.shows[0].showName} and other shows`;
+}
+
 // ── Connection finder — all paths (unidirectional BFS) ──
 
 async function findAllUnidirectional(slug1, slug2, maxDepth, options = {}) {
@@ -860,7 +870,7 @@ async function findAllConnections(slug1, slug2, maxDepth, options = {}) {
 
 // ── Graph visualization ──
 
-function renderGraph(result) {
+function renderGraph(result, { preserveView = false } = {}) {
     const { paths, peopleNames: pNames } = result;
     const palette = GRAPH_PALETTE;
 
@@ -877,6 +887,7 @@ function renderGraph(result) {
     const edgeBaseStyles = new Map();
 
     currentHighlightedPath = null;
+    graphDefaultView = null;
 
     for (const [pathIndex, { path, edges }] of paths.entries()) {
         // Add person nodes
@@ -926,7 +937,7 @@ function renderGraph(result) {
                     color: { color: path.length === 2 ? palette.activeEdge : palette.baseEdge, highlight: palette.activeEdge },
                     width: 2,
                     smooth: false,
-                    title: `${pNames.get(edge.from)} and ${pNames.get(edge.to)} worked together`,
+                    title: formatEdgeTitle(edge),
                 });
                 edgeBaseStyles.set(key, { color: { color: path.length === 2 ? palette.activeEdge : palette.baseEdge, highlight: palette.activeEdge }, width: 2 });
             }
@@ -970,8 +981,40 @@ function renderGraph(result) {
         },
     };
 
-    if (network) network.destroy();
-    network = new vis.Network(graphContainer, data, options);
+    const previousView = network && preserveView
+        ? {
+            position: network.getViewPosition(),
+            scale: network.getScale(),
+        }
+        : null;
+
+    if (network) {
+        network.setOptions(options);
+        network.setData(data);
+    } else {
+        network = new vis.Network(graphContainer, data, options);
+        network.on('click', handleGraphClick);
+    }
+
+    const renderedNetwork = network;
+    renderedNetwork.once('stabilizationIterationsDone', () => {
+        if (network !== renderedNetwork) return;
+
+        if (previousView) {
+            renderedNetwork.moveTo({
+                position: previousView.position,
+                scale: previousView.scale,
+                animation: false,
+            });
+            return;
+        }
+
+        renderedNetwork.fit({ animation: false });
+        graphDefaultView = {
+            position: renderedNetwork.getViewPosition(),
+            scale: renderedNetwork.getScale(),
+        };
+    });
 }
 
 function addPathMembership(pathMap, key, pathIndex) {
@@ -979,11 +1022,12 @@ function addPathMembership(pathMap, key, pathIndex) {
     pathMap.get(key).add(pathIndex);
 }
 
-function highlightPath(pathIndex) {
+function setHighlightedPath(pathIndex) {
     if (!graphState) return;
 
-    currentHighlightedPath = currentHighlightedPath === pathIndex ? null : pathIndex;
-    const activePath = currentHighlightedPath;
+    const palette = GRAPH_PALETTE;
+    currentHighlightedPath = pathIndex;
+    const activePath = pathIndex;
 
     const nodeUpdates = graphState.nodes.get().map((node) => {
         const inPath = activePath === null || graphState.nodePathMap.get(node.id)?.has(activePath);
@@ -1023,11 +1067,96 @@ function highlightPath(pathIndex) {
     });
 }
 
+function toggleHighlightedPath(pathIndex) {
+    setHighlightedPath(currentHighlightedPath === pathIndex ? null : pathIndex);
+}
+
+function getPrimaryPathIndex(pathIndices) {
+    if (!pathIndices || pathIndices.size === 0) return null;
+    if (currentHighlightedPath !== null && pathIndices.has(currentHighlightedPath)) {
+        return currentHighlightedPath;
+    }
+    return Math.min(...pathIndices);
+}
+
+function focusDetailElement(element) {
+    if (!element) return;
+
+    if (detailFocusTimer) {
+        clearTimeout(detailFocusTimer);
+        detailFocusTimer = null;
+    }
+
+    element.classList.add('detail-focus');
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    detailFocusTimer = window.setTimeout(() => {
+        element.classList.remove('detail-focus');
+        detailFocusTimer = null;
+    }, 1800);
+}
+
+function openPathDetails(pathIndex) {
+    const pathEl = detailsContent.querySelector(`.connection-path[data-path-index="${pathIndex}"]`);
+    if (!pathEl) return null;
+    pathEl.open = true;
+    return pathEl;
+}
+
+function focusPathInDetails(pathIndex, edgeId = null, personSlug = null) {
+    const pathEl = openPathDetails(pathIndex);
+    if (!pathEl) return;
+
+    let target = pathEl;
+    if (edgeId) {
+        const stepEl = [...pathEl.querySelectorAll('.connection-step')].find((el) => el.dataset.edgeId === edgeId);
+        if (stepEl) target = stepEl;
+    }
+
+    focusDetailElement(target);
+}
+
+function handleGraphClick(params) {
+    if (!graphState) return;
+
+    const nodeId = params.nodes[0];
+    if (nodeId) {
+        const pathIndex = getPrimaryPathIndex(graphState.nodePathMap.get(nodeId));
+        if (pathIndex === null) return;
+        setHighlightedPath(pathIndex);
+        focusPathInDetails(pathIndex, null, nodeId.replace(/^person:/, ''));
+        return;
+    }
+
+    const edgeId = params.edges[0];
+    if (edgeId) {
+        const pathIndex = getPrimaryPathIndex(graphState.edgePathMap.get(edgeId));
+        if (pathIndex === null) return;
+        setHighlightedPath(pathIndex);
+        focusPathInDetails(pathIndex, edgeId);
+        return;
+    }
+
+    setHighlightedPath(null);
+}
+
 function resetGraphView() {
     if (!network) return;
 
-    highlightPath(null);
+    setHighlightedPath(null);
     network.stopSimulation();
+
+    if (graphDefaultView) {
+        network.moveTo({
+            position: graphDefaultView.position,
+            scale: graphDefaultView.scale,
+            animation: {
+                duration: 500,
+                easingFunction: 'easeInOutQuad',
+            },
+        });
+        return;
+    }
+
     network.fit({
         animation: {
             duration: 500,
@@ -1063,7 +1192,7 @@ function renderDetails(result) {
             const pathLabel = middlePeople.length > 0
                 ? `&rarr; ${middlePeople.join(' &rarr; ')} &rarr;`
                 : 'Direct connection';
-            html += `<details class="connection-path" data-path-index="${pathIndex}">`;
+            html += `<details class="connection-path" data-path-index="${pathIndex}" data-start-slug="${path[0]}" data-end-slug="${path[path.length - 1]}">`;
             html += `<summary class="path-summary">${pathLabel}</summary>`;
             html += `<div class="path-body">`;
 
@@ -1079,7 +1208,8 @@ function renderDetails(result) {
                 );
 
                 if (edge) {
-                    html += `<div class="connection-step">`;
+                    const edgeId = `person:${edge.from}->person:${edge.to}`;
+                    html += `<div class="connection-step" data-edge-id="${edgeId}" data-person-slugs="${fromSlug} ${toSlug}">`;
                     html += `<div class="connection-link">${escapeHtml(fromName)} &rarr; ${escapeHtml(toName)}</div>`;
                     for (const show of edge.shows) {
                         const fromRole = edge.from === fromSlug ? show.fromRole : show.toRole;
@@ -1087,7 +1217,7 @@ function renderDetails(result) {
                         html += `<details class="show-detail">`;
                         html += `<summary class="show-name">${escapeHtml(show.showName)}</summary>`;
                         html += `<div class="show-meta">`;
-                        html += `<div class="show-link"><a href="${API_BASE}/shows/${show.showSlug}" target="_blank">Open show page</a></div>`;
+                        html += `<div class="show-link"><a href="${CAMDRAM_SITE_BASE}/shows/${show.showSlug}" target="_blank" rel="noopener noreferrer">Open show page</a></div>`;
                         html += `<div class="roles">${escapeHtml(fromName)}: ${escapeHtml(fromRole)} | ${escapeHtml(toName)}: ${escapeHtml(toRole)}</div>`;
                         html += `</div>`;
                         html += `</details>`;
@@ -1111,10 +1241,10 @@ function renderDetails(result) {
     detailsContent.querySelectorAll('.connection-path').forEach((pathEl) => {
         const pathIndex = Number(pathEl.dataset.pathIndex);
         const summaryEl = pathEl.querySelector('.path-summary');
-        summaryEl.addEventListener('click', () => highlightPath(pathIndex));
+        summaryEl.addEventListener('click', () => toggleHighlightedPath(pathIndex));
         summaryEl.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' || e.key === ' ') {
-                highlightPath(pathIndex);
+                toggleHighlightedPath(pathIndex);
             }
         });
     });
@@ -1162,7 +1292,7 @@ function renderShowList(result) {
         html += '<details class="show-list-item">';
         html += `<summary class="show-list-summary">${escapeHtml(show.showName)} <span class="show-count">${show.links.length} link${show.links.length !== 1 ? 's' : ''}</span></summary>`;
         html += '<div class="show-list-body">';
-        html += `<div class="show-link"><a href="${API_BASE}/shows/${show.showSlug}" target="_blank">Open show page</a></div>`;
+        html += `<div class="show-link"><a href="${CAMDRAM_SITE_BASE}/shows/${show.showSlug}" target="_blank" rel="noopener noreferrer">Open show page</a></div>`;
 
         for (const link of show.links) {
             html += '<div class="show-list-link">';
@@ -1205,7 +1335,7 @@ function renderInterimResults(result) {
     degreesBadge.textContent = 'Path found';
     graphPanel.classList.remove('hidden');
     renderResultSummary(result, true);
-    renderGraph(result);
+    renderGraph(result, { preserveView: Boolean(network) });
     renderDetails(result);
 }
 
@@ -1234,6 +1364,7 @@ findBtn.addEventListener('click', async () => {
     resultSummaryEl.textContent = '';
     currentHighlightedPath = null;
     graphState = null;
+    graphDefaultView = null;
 
     try {
         const maxDepth = getSelectedMaxDepth();
