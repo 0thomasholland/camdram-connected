@@ -8,14 +8,30 @@ const API_BASE = '/api';
 
 const CONCURRENCY = 4;
 const MIN_GAP_MS = 50;
+const MAX_GAP_MS = 400;
 const MAX_RETRIES = 3;
 const BASE_RETRY_MS = 200;
+
+const GRAPH_PALETTE = {
+    startNode: { background: '#d97745', border: '#b4532a', highlight: { background: '#ea8a58', border: '#c96133' } },
+    endNode: { background: '#d97745', border: '#b4532a', highlight: { background: '#ea8a58', border: '#c96133' } },
+    midNode: { background: '#8b7cf6', border: '#6f61da', highlight: { background: '#9a8cff', border: '#7d70e6' } },
+    quietNode: { background: '#4b4d67', border: '#393b51', highlight: { background: '#5c5f7c', border: '#4a4d67' } },
+    activeEdge: '#5b5ce2',
+    baseEdge: '#71758e',
+    mutedEdge: '#d3cec2',
+    label: '#2f2c2f',
+    labelMuted: '#5c5960',
+    dimFill: '#ddd7cb',
+    dimBorder: '#b7b0a2',
+};
 
 class FetchPool {
     constructor() {
         this._inFlight = 0;
         this._queue = [];
         this._lastStartTime = 0;
+        this._minGapMs = MIN_GAP_MS;
     }
 
     fetch(url) {
@@ -35,8 +51,8 @@ class FetchPool {
             // Enforce minimum gap between request starts
             const now = Date.now();
             const elapsed = now - this._lastStartTime;
-            if (elapsed < MIN_GAP_MS) {
-                await new Promise(r => setTimeout(r, MIN_GAP_MS - elapsed));
+            if (elapsed < this._minGapMs) {
+                await new Promise(r => setTimeout(r, this._minGapMs - elapsed));
             }
             this._lastStartTime = Date.now();
 
@@ -54,6 +70,7 @@ class FetchPool {
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             const resp = await fetch(url);
             if (resp.status === 429 && attempt < MAX_RETRIES) {
+                this._minGapMs = Math.min(MAX_GAP_MS, this._minGapMs + 50);
                 const delay = BASE_RETRY_MS * Math.pow(2, attempt);
                 await new Promise(r => setTimeout(r, delay));
                 continue;
@@ -62,6 +79,7 @@ class FetchPool {
                 if (resp.status === 404) return null;
                 throw new Error(`API error ${resp.status} for ${url}`);
             }
+            this._minGapMs = Math.max(MIN_GAP_MS, this._minGapMs - 5);
             return resp.json();
         }
     }
@@ -83,8 +101,13 @@ let network = null;
 // Persistent caches (survive across searches)
 const personRolesCache = new Map(); // slug -> raw roles[] (unfiltered)
 const showRolesCache = new Map();   // slug -> raw roles[] (unfiltered)
+const adjacencyCache = new Map();   // roleKey:personSlug -> coworker map
+const peopleSearchCache = new Map(); // query -> ranked people[]
 const peopleNames = new Map();      // slug -> display name
 let cacheHits = 0;
+let currentSearchToken = 0;
+let currentHighlightedPath = null;
+let graphState = null;
 
 // ── DOM refs ──
 
@@ -94,16 +117,20 @@ const person1Slug = document.getElementById('person1-slug');
 const person2Slug = document.getElementById('person2-slug');
 const person1List = document.getElementById('person1-list');
 const person2List = document.getElementById('person2-list');
+const person1Selected = document.getElementById('person1-selected');
+const person2Selected = document.getElementById('person2-selected');
+const swapBtn = document.getElementById('swap-btn');
 const findBtn = document.getElementById('find-btn');
 const statusEl = document.getElementById('status');
 const resultsEl = document.getElementById('results');
 const degreesBadge = document.getElementById('degrees-badge');
+const resultSummaryEl = document.getElementById('result-summary');
+const graphPanel = document.getElementById('graph-panel');
 const graphContainer = document.getElementById('graph-container');
 const detailsContent = document.getElementById('details-content');
+const resetViewBtn = document.getElementById('reset-view-btn');
 const exportBtn = document.getElementById('export-btn');
 const shareBtn = document.getElementById('share-btn');
-const maxDepthSelect = document.getElementById('max-depth');
-const shortestOnlyCheckbox = document.getElementById('shortest-only');
 const progressContainer = document.getElementById('progress-container');
 const progressBar = document.getElementById('progress-bar');
 const progressLog = document.getElementById('progress-log');
@@ -111,13 +138,23 @@ const progressDepthEl = document.getElementById('progress-depth');
 const progressShowsEl = document.getElementById('progress-shows');
 const progressCacheEl = document.getElementById('progress-cache');
 const progressPathsEl = document.getElementById('progress-paths');
+const progressSummaryEl = document.getElementById('progress-summary');
+const progressToggle = document.getElementById('progress-toggle');
 
 // ── API layer ──
 
 async function searchPeople(query) {
     if (query.length < 2) return [];
+    const normalized = query.trim().toLowerCase();
+    if (peopleSearchCache.has(normalized)) {
+        cacheHits++;
+        return peopleSearchCache.get(normalized);
+    }
+
     const data = await pool.fetch(`${API_BASE}/people.json?q=${encodeURIComponent(query)}`);
-    return data || [];
+    const ranked = rerankPeopleResults(data || [], normalized);
+    peopleSearchCache.set(normalized, ranked);
+    return ranked;
 }
 
 async function getPersonRoles(slug) {
@@ -132,35 +169,127 @@ async function getShowRoles(slug) {
 
 // ── Autocomplete ──
 
+function rerankPeopleResults(results, query) {
+    const queryTokens = query.split(/\s+/).filter(Boolean);
+
+    return [...results].sort((a, b) => scorePersonResult(b, queryTokens, query) - scorePersonResult(a, queryTokens, query));
+}
+
+function scorePersonResult(person, queryTokens, fullQuery) {
+    const name = person.name.toLowerCase();
+    const slug = person.slug.toLowerCase();
+    let score = 0;
+
+    if (name === fullQuery) score += 200;
+    if (slug === fullQuery) score += 180;
+    if (name.startsWith(fullQuery)) score += 120;
+    if (slug.startsWith(fullQuery)) score += 100;
+    if (name.includes(fullQuery)) score += 50;
+    if (slug.includes(fullQuery)) score += 35;
+
+    for (const token of queryTokens) {
+        if (name.startsWith(token)) score += 15;
+        if (slug.startsWith(token)) score += 10;
+        if (name.includes(token)) score += 4;
+    }
+
+    return score;
+}
+
+function renderAutocompleteState(list, message, className = 'empty') {
+    list.innerHTML = '';
+    const item = document.createElement('div');
+    item.className = `autocomplete-item ${className}`;
+    item.textContent = message;
+    list.appendChild(item);
+    list.classList.add('visible');
+}
+
+function setSelectedPersonUI(input, slugInput, selectedEl, person) {
+    const hasSelection = Boolean(person && person.slug);
+
+    if (hasSelection) {
+        input.classList.add('selected');
+        selectedEl.textContent = `@${person.slug}`;
+        selectedEl.classList.remove('hidden');
+        input.setAttribute('aria-label', `${person.name}, selected`);
+    } else {
+        input.classList.remove('selected');
+        selectedEl.textContent = '';
+        selectedEl.classList.add('hidden');
+        input.removeAttribute('aria-label');
+    }
+
+    if (!hasSelection) slugInput.value = '';
+}
+
+function prefetchPersonRoles(slug) {
+    if (!slug || personRolesCache.has(slug)) return;
+    getPersonRoles(slug)
+        .then((roles) => {
+            personRolesCache.set(slug, roles || []);
+            const firstRole = roles && roles[0];
+            if (firstRole && firstRole.person && firstRole.person.name) {
+                peopleNames.set(slug, firstRole.person.name);
+            }
+        })
+        .catch(() => {
+            // Prefetch should never interrupt manual search flow.
+        });
+}
+
 function setupAutocomplete(input, list, slugInput) {
     let debounceTimer = null;
     let activeIndex = -1;
+    let requestId = 0;
+    const selectedEl = input === person1Input ? person1Selected : person2Selected;
+
+    function closeList() {
+        list.classList.remove('visible');
+        input.setAttribute('aria-expanded', 'false');
+        input.removeAttribute('aria-activedescendant');
+    }
 
     input.addEventListener('input', () => {
         // Clear selection when user modifies text
-        slugInput.value = '';
-        input.classList.remove('selected');
+        setSelectedPersonUI(input, slugInput, selectedEl, null);
         updateFindButton();
 
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(async () => {
             const query = input.value.trim();
             if (query.length < 2) {
-                list.classList.remove('visible');
+                if (query.length === 0) {
+                    closeList();
+                } else {
+                    renderAutocompleteState(list, 'Keep typing for suggestions.');
+                    input.setAttribute('aria-expanded', 'true');
+                }
                 return;
             }
+
+            const thisRequestId = ++requestId;
+            renderAutocompleteState(list, 'Searching...', 'loading');
+            input.setAttribute('aria-expanded', 'true');
+
             try {
                 const results = await searchPeople(query);
+                if (thisRequestId !== requestId || input.value.trim() !== query) return;
+
                 renderAutocomplete(list, results, (person) => {
                     input.value = person.name;
                     slugInput.value = person.slug;
-                    input.classList.add('selected');
-                    list.classList.remove('visible');
+                    setSelectedPersonUI(input, slugInput, selectedEl, person);
+                    closeList();
                     updateFindButton();
+                    prefetchPersonRoles(person.slug);
                 });
                 activeIndex = -1;
+                input.removeAttribute('aria-activedescendant');
             } catch {
-                list.classList.remove('visible');
+                if (thisRequestId !== requestId) return;
+                renderAutocompleteState(list, 'Search unavailable right now.', 'error');
+                input.setAttribute('aria-expanded', 'true');
             }
         }, 300);
     });
@@ -172,23 +301,26 @@ function setupAutocomplete(input, list, slugInput) {
         if (e.key === 'ArrowDown') {
             e.preventDefault();
             activeIndex = Math.min(activeIndex + 1, items.length - 1);
-            updateActiveItem(items, activeIndex);
+            updateActiveItem(input, items, activeIndex);
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
             activeIndex = Math.max(activeIndex - 1, 0);
-            updateActiveItem(items, activeIndex);
+            updateActiveItem(input, items, activeIndex);
         } else if (e.key === 'Enter' && activeIndex >= 0) {
             e.preventDefault();
             items[activeIndex].click();
+        } else if (e.key === 'Enter' && person1Slug.value && person2Slug.value) {
+            e.preventDefault();
+            findBtn.click();
         } else if (e.key === 'Escape') {
-            list.classList.remove('visible');
+            closeList();
         }
     });
 
     // Close on outside click
     document.addEventListener('click', (e) => {
         if (!input.contains(e.target) && !list.contains(e.target)) {
-            list.classList.remove('visible');
+            closeList();
         }
     });
 }
@@ -196,25 +328,39 @@ function setupAutocomplete(input, list, slugInput) {
 function renderAutocomplete(list, results, onSelect) {
     list.innerHTML = '';
     if (results.length === 0) {
-        list.classList.remove('visible');
+        renderAutocompleteState(list, 'No matches found.');
         return;
     }
-    for (const person of results) {
+    for (const [index, person] of results.slice(0, 8).entries()) {
         const item = document.createElement('div');
         item.className = 'autocomplete-item';
+        item.id = `${list.id}-option-${index}`;
+        item.setAttribute('role', 'option');
         item.innerHTML = `${escapeHtml(person.name)} <span class="slug">${escapeHtml(person.slug)}</span>`;
         item.addEventListener('click', () => onSelect(person));
         list.appendChild(item);
     }
     list.classList.add('visible');
+    const ownerInput = list.id === 'person1-list' ? person1Input : person2Input;
+    ownerInput.setAttribute('aria-expanded', 'true');
 }
 
-function updateActiveItem(items, index) {
-    items.forEach((item, i) => item.classList.toggle('active', i === index));
+function updateActiveItem(input, items, index) {
+    items.forEach((item, i) => {
+        item.classList.toggle('active', i === index);
+        item.setAttribute('aria-selected', i === index ? 'true' : 'false');
+    });
+
+    const activeItem = items[index];
+    if (activeItem) {
+        input.setAttribute('aria-activedescendant', activeItem.id);
+    } else {
+        input.removeAttribute('aria-activedescendant');
+    }
 }
 
 function updateFindButton() {
-    findBtn.disabled = !(person1Slug.value && person2Slug.value);
+    findBtn.disabled = !(person1Slug.value && person2Slug.value) || person1Slug.value === person2Slug.value;
 }
 
 // ── Status display ──
@@ -243,6 +389,7 @@ function resetProgress() {
     progressShowsEl.textContent = '0 shows';
     progressCacheEl.textContent = '0 cached';
     progressPathsEl.textContent = '0 paths';
+    progressSummaryEl.textContent = 'Preparing search...';
     cacheHits = 0;
 }
 
@@ -255,8 +402,19 @@ function updateProgress(depthLabel, current, total, showCount, pathCount) {
     progressShowsEl.textContent = `${showCount} show${showCount !== 1 ? 's' : ''}`;
     progressCacheEl.textContent = `${cacheHits} cached`;
     progressPathsEl.textContent = `${pathCount} path${pathCount !== 1 ? 's' : ''}`;
+    progressSummaryEl.textContent = buildProgressSummary(depthLabel, current, total, showCount, pathCount);
     const pct = total > 0 ? (current / total) * 100 : 0;
     progressBar.style.width = `${pct}%`;
+}
+
+function buildProgressSummary(depthLabel, current, total, showCount, pathCount) {
+    if (pathCount > 0) {
+        return `${depthLabel}: found ${pathCount} candidate path${pathCount !== 1 ? 's' : ''}, finishing current layer.`;
+    }
+    if (showCount > 0) {
+        return `${depthLabel}: explored ${current}/${total} people and checked ${showCount} show${showCount !== 1 ? 's' : ''}.`;
+    }
+    return `${depthLabel}: exploring connections...`;
 }
 
 function logFetch(message, type = '') {
@@ -270,8 +428,20 @@ function logFetch(message, type = '') {
 // ── Shared helpers for BFS ──
 
 function getActiveRoleTypes() {
-    return Array.from(document.querySelectorAll('.filters fieldset input:checked'))
+    return Array.from(document.querySelectorAll('.filters fieldset input[type="checkbox"]:checked'))
         .map(cb => cb.value);
+}
+
+function getRoleTypeKey(roleTypes) {
+    return [...roleTypes].sort().join('|');
+}
+
+function isShortestOnlyMode() {
+    return document.querySelector('input[name="search-mode"]:checked')?.value !== 'all';
+}
+
+function getSelectedMaxDepth() {
+    return parseInt(document.querySelector('input[name="max-depth"]:checked')?.value || '2', 10);
 }
 
 /**
@@ -317,6 +487,12 @@ async function getCachedShowRoles(showSlug, roleTypes) {
  * Returns Map<coSlug, {shows: [{showSlug, showName, fromRoles: Set, toRoles: Set}]}>
  */
 async function expandPerson(personSlug, roleTypes, progressCallback) {
+    const adjacencyKey = `${getRoleTypeKey(roleTypes)}:${personSlug}`;
+    if (adjacencyCache.has(adjacencyKey)) {
+        cacheHits++;
+        return adjacencyCache.get(adjacencyKey);
+    }
+
     const wasCached = personRolesCache.has(personSlug);
     const roles = await getCachedPersonRoles(personSlug, roleTypes);
     const personName = peopleNames.get(personSlug) || personSlug;
@@ -334,7 +510,7 @@ async function expandPerson(personSlug, roleTypes, progressCallback) {
     }
 
     // Fetch all shows in parallel (pool throttles naturally)
-    const showEntries = Array.from(showMap.entries());
+    const showEntries = Array.from(showMap.entries()).sort((a, b) => estimateShowCost(a[0]) - estimateShowCost(b[0]));
     const showRolesResults = await Promise.all(
         showEntries.map(async ([showSlug, showData]) => {
             const showCached = showRolesCache.has(showSlug);
@@ -374,7 +550,30 @@ async function expandPerson(personSlug, roleTypes, progressCallback) {
         }
     }
 
+    adjacencyCache.set(adjacencyKey, connectionsByCoworker);
     return connectionsByCoworker;
+}
+
+function estimateShowCost(showSlug) {
+    const cachedRoles = showRolesCache.get(showSlug);
+    return cachedRoles ? cachedRoles.length : Number.MAX_SAFE_INTEGER;
+}
+
+function estimateFrontierCost(frontier, roleTypes) {
+    let totalCost = 0;
+    for (const personSlug of frontier) {
+        if (!personRolesCache.has(personSlug)) {
+            totalCost += 1000;
+            continue;
+        }
+
+        const roles = personRolesCache.get(personSlug).filter(r => roleTypes.includes(r.type));
+        const uniqueShows = new Set(roles.map(r => r.show.slug));
+        for (const showSlug of uniqueShows) {
+            totalCost += estimateShowCost(showSlug);
+        }
+    }
+    return totalCost;
 }
 
 /**
@@ -390,14 +589,28 @@ function buildEdge(fromSlug, toSlug, showConnsMap) {
     return { from: fromSlug, to: toSlug, shows };
 }
 
+function pathRepeatsShow(edges) {
+    const seenShows = new Set();
+    for (const edge of edges) {
+        for (const show of edge.shows) {
+            if (seenShows.has(show.showSlug)) return true;
+        }
+        for (const show of edge.shows) {
+            seenShows.add(show.showSlug);
+        }
+    }
+    return false;
+}
+
 // ── Connection finder — all paths (unidirectional BFS) ──
 
-async function findAllUnidirectional(slug1, slug2, maxDepth) {
+async function findAllUnidirectional(slug1, slug2, maxDepth, options = {}) {
     const roleTypes = getActiveRoleTypes();
+    const { onPathFound } = options;
 
     const allPaths = [];
-    const visited = new Set([slug1]);
-    let queue = [{ personSlug: slug1, path: [slug1], edges: [] }];
+    const seenPathKeys = new Set();
+    let queue = [{ personSlug: slug1, path: [slug1], edges: [], seenSlugs: new Set([slug1]) }];
 
     let showsFetched = 0;
 
@@ -433,19 +646,27 @@ async function findAllUnidirectional(slug1, slug2, maxDepth) {
                     const newEdge = buildEdge(entry.personSlug, coSlug, showConnsMap);
                     const newEdges = [...entry.edges, newEdge];
 
+                    if (pathRepeatsShow(newEdges)) continue;
+
                     if (coSlug === slug2) {
-                        allPaths.push({
+                        const found = {
                             path: [...entry.path, coSlug],
                             edges: newEdges,
-                        });
-                        const pathNames = [...entry.path, coSlug].map(s => peopleNames.get(s) || s).join(' → ');
-                        logFetch(`Found path: ${pathNames}`, 'found');
-                    } else if (!visited.has(coSlug)) {
-                        visited.add(coSlug);
+                        };
+                        const pathKey = found.path.join('>');
+                        if (!seenPathKeys.has(pathKey)) {
+                            seenPathKeys.add(pathKey);
+                            allPaths.push(found);
+                            const pathNames = found.path.map(s => peopleNames.get(s) || s).join(' → ');
+                            logFetch(`Found path: ${pathNames}`, 'found');
+                            if (onPathFound) onPathFound({ paths: [...allPaths], peopleNames });
+                        }
+                    } else if (!entry.seenSlugs.has(coSlug)) {
                         nextQueue.push({
                             personSlug: coSlug,
                             path: [...entry.path, coSlug],
                             edges: newEdges,
+                            seenSlugs: new Set([...entry.seenSlugs, coSlug]),
                         });
                     }
                 }
@@ -454,9 +675,6 @@ async function findAllUnidirectional(slug1, slug2, maxDepth) {
                 updateProgress(depthLabel, peopleExplored, totalAtDepth, showsFetched, allPaths.length);
             }
         }
-
-        // Early termination: if we found paths at this depth, stop
-        if (allPaths.length > 0) break;
 
         queue = nextQueue;
         if (queue.length === 0) break;
@@ -468,8 +686,9 @@ async function findAllUnidirectional(slug1, slug2, maxDepth) {
 
 // ── Connection finder — shortest path (bidirectional BFS) ──
 
-async function findShortestBidirectional(slug1, slug2, maxDepth) {
+async function findShortestBidirectional(slug1, slug2, maxDepth, options = {}) {
     const roleTypes = getActiveRoleTypes();
+    const { onPathFound } = options;
 
     // Forward: slug1 → slug2, Backward: slug2 → slug1
     let forwardFrontier = [slug1];
@@ -486,13 +705,18 @@ async function findShortestBidirectional(slug1, slug2, maxDepth) {
 
     let showsFetched = 0;
     const foundPaths = [];
+    const seenPathKeys = new Set();
     let totalDepth = 0;
 
     for (let depth = 0; depth < maxDepth; depth++) {
         totalDepth = depth + 1;
 
-        // Choose smaller frontier to expand
-        const expandForward = forwardFrontier.length <= backwardFrontier.length;
+        // Expand frontier with lower estimated API and branching cost.
+        const forwardCost = estimateFrontierCost(forwardFrontier, roleTypes);
+        const backwardCost = estimateFrontierCost(backwardFrontier, roleTypes);
+        const expandForward = forwardCost === backwardCost
+            ? forwardFrontier.length <= backwardFrontier.length
+            : forwardCost < backwardCost;
         const frontier = expandForward ? forwardFrontier : backwardFrontier;
         const visited = expandForward ? forwardVisited : backwardVisited;
         const paths = expandForward ? forwardPaths : backwardPaths;
@@ -546,9 +770,13 @@ async function findShortestBidirectional(slug1, slug2, maxDepth) {
                                 const combined = expandForward
                                     ? combinePaths(fwd, bwd)
                                     : combinePaths(bwd, fwd);
+                                const pathKey = combined.path.join('>');
+                                if (seenPathKeys.has(pathKey)) continue;
+                                seenPathKeys.add(pathKey);
                                 foundPaths.push(combined);
                                 const pathNames = combined.path.map(s => peopleNames.get(s) || s).join(' → ');
                                 logFetch(`Found path: ${pathNames}`, 'found');
+                                if (onPathFound) onPathFound({ paths: [...foundPaths], peopleNames });
                             }
                         }
                     }
@@ -617,16 +845,16 @@ function combinePaths(forward, backward) {
 
 // ── Connection finder dispatcher ──
 
-async function findAllConnections(slug1, slug2, maxDepth) {
+async function findAllConnections(slug1, slug2, maxDepth, options = {}) {
     const roleTypes = getActiveRoleTypes();
     if (roleTypes.length === 0) {
         throw new Error('Select at least one role type');
     }
 
-    if (shortestOnlyCheckbox.checked) {
-        return findShortestBidirectional(slug1, slug2, maxDepth);
+    if (isShortestOnlyMode()) {
+        return findShortestBidirectional(slug1, slug2, maxDepth, options);
     } else {
-        return findAllUnidirectional(slug1, slug2, maxDepth);
+        return findAllUnidirectional(slug1, slug2, maxDepth, options);
     }
 }
 
@@ -634,6 +862,7 @@ async function findAllConnections(slug1, slug2, maxDepth) {
 
 function renderGraph(result) {
     const { paths, peopleNames: pNames } = result;
+    const palette = GRAPH_PALETTE;
 
     const startSlug = paths[0].path[0];
     const endSlug = paths[0].path[paths[0].path.length - 1];
@@ -642,78 +871,64 @@ function renderGraph(result) {
     const edgeData = [];
     const nodeIds = new Set();
     const edgeKeys = new Set();
+    const nodePathMap = new Map();
+    const edgePathMap = new Map();
+    const nodeBaseStyles = new Map();
+    const edgeBaseStyles = new Map();
 
-    for (const { path, edges } of paths) {
+    currentHighlightedPath = null;
+
+    for (const [pathIndex, { path, edges }] of paths.entries()) {
         // Add person nodes
         for (const slug of path) {
             const nodeId = `person:${slug}`;
+            addPathMembership(nodePathMap, nodeId, pathIndex);
             if (nodeIds.has(nodeId)) continue;
             nodeIds.add(nodeId);
 
             const name = pNames.get(slug) || slug;
             const isEndpoint = slug === startSlug || slug === endSlug;
+            const isStart = slug === startSlug;
+            const isEnd = slug === endSlug;
+            const nodeColor = isStart ? palette.startNode : (isEnd ? palette.endNode : (path.length <= 3 ? palette.midNode : palette.quietNode));
             nodeData.push({
                 id: nodeId,
                 label: name,
                 shape: 'dot',
                 size: isEndpoint ? 25 : 18,
-                color: {
-                    background: isEndpoint ? '#6c63ff' : '#3b3d54',
-                    border: isEndpoint ? '#8b83ff' : '#555770',
-                    highlight: { background: '#8b83ff', border: '#a9a3ff' },
-                },
+                x: slug === startSlug ? -220 : (slug === endSlug ? 220 : undefined),
+                y: isEndpoint ? 0 : undefined,
+                fixed: isEndpoint ? { x: true, y: true } : false,
+                color: nodeColor,
                 font: {
-                    color: '#e4e4e7',
-                    size: isEndpoint ? 16 : 13,
+                    color: isEndpoint ? palette.label : palette.labelMuted,
+                    size: isEndpoint ? 17 : 14,
+                    strokeWidth: 5,
+                    strokeColor: '#fffdf8',
                     face: '-apple-system, BlinkMacSystemFont, sans-serif',
                 },
             });
+            nodeBaseStyles.set(nodeId, {
+                color: nodeColor,
+            });
         }
 
-        // Add show nodes and edges (deduplicated across paths)
+        // Add direct person-to-person edges. Show details stay in cards.
         for (const edge of edges) {
-            for (const show of edge.shows) {
-                const showId = `show:${show.showSlug}`;
-                if (!nodeIds.has(showId)) {
-                    nodeIds.add(showId);
-                    nodeData.push({
-                        id: showId,
-                        label: show.showName,
-                        shape: 'box',
-                        size: 12,
-                        color: {
-                            background: '#1e3a2f',
-                            border: '#22c55e',
-                            highlight: { background: '#2a4d3c', border: '#4ade80' },
-                        },
-                        font: { color: '#86efac', size: 11, face: '-apple-system, BlinkMacSystemFont, sans-serif' },
-                        margin: 8,
-                    });
-                }
-
-                const key1 = `person:${edge.from}->show:${show.showSlug}`;
-                if (!edgeKeys.has(key1)) {
-                    edgeKeys.add(key1);
-                    edgeData.push({
-                        from: `person:${edge.from}`,
-                        to: showId,
-                        color: { color: '#3b3d54', highlight: '#6c63ff' },
-                        width: 1.5,
-                        title: `${pNames.get(edge.from)}: ${show.fromRole}`,
-                    });
-                }
-
-                const key2 = `show:${show.showSlug}->person:${edge.to}`;
-                if (!edgeKeys.has(key2)) {
-                    edgeKeys.add(key2);
-                    edgeData.push({
-                        from: showId,
-                        to: `person:${edge.to}`,
-                        color: { color: '#3b3d54', highlight: '#6c63ff' },
-                        width: 1.5,
-                        title: `${pNames.get(edge.to)}: ${show.toRole}`,
-                    });
-                }
+            const key = `person:${edge.from}->person:${edge.to}`;
+            addPathMembership(edgePathMap, key, pathIndex);
+            if (!edgeKeys.has(key)) {
+                edgeKeys.add(key);
+                edgeData.push({
+                    id: key,
+                    from: `person:${edge.from}`,
+                    to: `person:${edge.to}`,
+                    color: { color: path.length === 2 ? palette.activeEdge : palette.baseEdge, highlight: palette.activeEdge },
+                    width: 2,
+                    smooth: false,
+                    title: `${pNames.get(edge.from)} and ${pNames.get(edge.to)} worked together`,
+                });
+                edgeBaseStyles.set(key, { color: { color: path.length === 2 ? palette.activeEdge : palette.baseEdge, highlight: palette.activeEdge }, width: 2 });
             }
         }
     }
@@ -723,13 +938,22 @@ function renderGraph(result) {
         edges: new vis.DataSet(edgeData),
     };
 
+    graphState = {
+        nodes: data.nodes,
+        edges: data.edges,
+        nodePathMap,
+        edgePathMap,
+        nodeBaseStyles,
+        edgeBaseStyles,
+    };
+
     const options = {
         physics: {
             solver: 'forceAtlas2Based',
             forceAtlas2Based: {
-                gravitationalConstant: -40,
+                gravitationalConstant: -70,
                 centralGravity: 0.005,
-                springLength: 120,
+                springLength: 160,
                 springConstant: 0.06,
             },
             stabilization: { iterations: 150 },
@@ -741,10 +965,75 @@ function renderGraph(result) {
         layout: {
             improvedLayout: true,
         },
+        edges: {
+            smooth: false,
+        },
     };
 
     if (network) network.destroy();
     network = new vis.Network(graphContainer, data, options);
+}
+
+function addPathMembership(pathMap, key, pathIndex) {
+    if (!pathMap.has(key)) pathMap.set(key, new Set());
+    pathMap.get(key).add(pathIndex);
+}
+
+function highlightPath(pathIndex) {
+    if (!graphState) return;
+
+    currentHighlightedPath = currentHighlightedPath === pathIndex ? null : pathIndex;
+    const activePath = currentHighlightedPath;
+
+    const nodeUpdates = graphState.nodes.get().map((node) => {
+        const inPath = activePath === null || graphState.nodePathMap.get(node.id)?.has(activePath);
+        const baseStyle = graphState.nodeBaseStyles.get(node.id);
+        return {
+            id: node.id,
+            opacity: inPath ? 1 : 0.25,
+            color: inPath
+                ? {
+                    background: baseStyle.color.background,
+                    border: baseStyle.color.border,
+                    highlight: baseStyle.color.highlight,
+                }
+                : {
+                    background: palette.dimFill,
+                    border: palette.dimBorder,
+                    highlight: baseStyle.color.highlight,
+                },
+        };
+    });
+
+    const edgeUpdates = graphState.edges.get().map((edge) => {
+        const inPath = activePath === null || graphState.edgePathMap.get(edge.id)?.has(activePath);
+        const baseStyle = graphState.edgeBaseStyles.get(edge.id);
+        return {
+            id: edge.id,
+            width: inPath ? 3 : 1.2,
+            color: inPath ? { color: baseStyle.color.color, highlight: palette.activeEdge } : { color: palette.mutedEdge, highlight: baseStyle.color.highlight },
+        };
+    });
+
+    graphState.nodes.update(nodeUpdates);
+    graphState.edges.update(edgeUpdates);
+
+    document.querySelectorAll('.connection-path').forEach((el) => {
+        el.classList.toggle('active', activePath !== null && Number(el.dataset.pathIndex) === activePath);
+    });
+}
+
+function resetGraphView() {
+    if (!network) return;
+
+    highlightPath(null);
+    network.stopSimulation();
+    network.fit({
+        animation: {
+            duration: 500,
+            easingFunction: 'easeInOutQuad',
+        },
+    });
 }
 
 // ── Details panel ──
@@ -754,23 +1043,29 @@ function renderDetails(result) {
 
     // Group paths by degree
     const byDegree = new Map();
-    for (const { path, edges } of paths) {
+    paths.forEach(({ path, edges }, pathIndex) => {
         const degree = path.length - 1;
         if (!byDegree.has(degree)) byDegree.set(degree, []);
-        byDegree.get(degree).push({ path, edges });
-    }
+        byDegree.get(degree).push({ path, edges, pathIndex });
+    });
 
     let html = '';
     const sortedDegrees = [...byDegree.keys()].sort((a, b) => a - b);
 
     for (const degree of sortedDegrees) {
         const degreePaths = byDegree.get(degree);
-        html += `<div class="degree-group">`;
+        html += `<div class="degree-group" data-degree="${degree}">`;
         html += `<div class="degree-heading">${degree} degree${degree !== 1 ? 's' : ''} of separation &mdash; ${degreePaths.length} path${degreePaths.length !== 1 ? 's' : ''}</div>`;
+        html += `<div class="path-grid">`;
 
-        for (const { path, edges } of degreePaths) {
-            html += `<div class="connection-path">`;
-            html += `<div class="path-summary">${path.map(s => escapeHtml(pNames.get(s) || s)).join(' &rarr; ')}</div>`;
+        for (const { path, edges, pathIndex } of degreePaths) {
+            const middlePeople = path.slice(1, -1).map(s => escapeHtml(pNames.get(s) || s));
+            const pathLabel = middlePeople.length > 0
+                ? `&rarr; ${middlePeople.join(' &rarr; ')} &rarr;`
+                : 'Direct connection';
+            html += `<details class="connection-path" data-path-index="${pathIndex}">`;
+            html += `<summary class="path-summary">${pathLabel}</summary>`;
+            html += `<div class="path-body">`;
 
             for (let i = 0; i < path.length - 1; i++) {
                 const fromSlug = path[i];
@@ -785,28 +1080,143 @@ function renderDetails(result) {
 
                 if (edge) {
                     html += `<div class="connection-step">`;
+                    html += `<div class="connection-link">${escapeHtml(fromName)} &rarr; ${escapeHtml(toName)}</div>`;
                     for (const show of edge.shows) {
                         const fromRole = edge.from === fromSlug ? show.fromRole : show.toRole;
                         const toRole = edge.from === fromSlug ? show.toRole : show.fromRole;
-                        html += `<div class="show-name"><a href="${API_BASE}/shows/${show.showSlug}" target="_blank">${escapeHtml(show.showName)}</a></div>`;
+                        html += `<details class="show-detail">`;
+                        html += `<summary class="show-name">${escapeHtml(show.showName)}</summary>`;
+                        html += `<div class="show-meta">`;
+                        html += `<div class="show-link"><a href="${API_BASE}/shows/${show.showSlug}" target="_blank">Open show page</a></div>`;
                         html += `<div class="roles">${escapeHtml(fromName)}: ${escapeHtml(fromRole)} | ${escapeHtml(toName)}: ${escapeHtml(toRole)}</div>`;
+                        html += `</div>`;
+                        html += `</details>`;
                     }
                     html += `</div>`;
                 }
             }
 
             html += `</div>`;
+            html += `</details>`;
         }
 
         html += `</div>`;
+        html += `</div>`;
     }
 
+    html += renderShowList(result);
+
     detailsContent.innerHTML = html;
+
+    detailsContent.querySelectorAll('.connection-path').forEach((pathEl) => {
+        const pathIndex = Number(pathEl.dataset.pathIndex);
+        const summaryEl = pathEl.querySelector('.path-summary');
+        summaryEl.addEventListener('click', () => highlightPath(pathIndex));
+        summaryEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                highlightPath(pathIndex);
+            }
+        });
+    });
+}
+
+function renderShowList(result) {
+    const { paths, peopleNames: pNames } = result;
+    const showsBySlug = new Map();
+
+    for (const { path, edges } of paths) {
+        for (let i = 0; i < edges.length; i++) {
+            const edge = edges[i];
+            const fromName = pNames.get(path[i]) || path[i];
+            const toName = pNames.get(path[i + 1]) || path[i + 1];
+
+            for (const show of edge.shows) {
+                if (!showsBySlug.has(show.showSlug)) {
+                    showsBySlug.set(show.showSlug, {
+                        showSlug: show.showSlug,
+                        showName: show.showName,
+                        links: [],
+                    });
+                }
+
+                showsBySlug.get(show.showSlug).links.push({
+                    fromName,
+                    toName,
+                    fromRole: show.fromRole,
+                    toRole: show.toRole,
+                });
+            }
+        }
+    }
+
+    const shows = [...showsBySlug.values()].sort((a, b) => {
+        if (b.links.length !== a.links.length) return b.links.length - a.links.length;
+        return a.showName.localeCompare(b.showName);
+    });
+
+    let html = '<div class="show-list-section">';
+    html += `<div class="degree-heading">Shows &mdash; ${shows.length} show${shows.length !== 1 ? 's' : ''}</div>`;
+    html += '<div class="show-list-grid">';
+
+    for (const show of shows) {
+        html += '<details class="show-list-item">';
+        html += `<summary class="show-list-summary">${escapeHtml(show.showName)} <span class="show-count">${show.links.length} link${show.links.length !== 1 ? 's' : ''}</span></summary>`;
+        html += '<div class="show-list-body">';
+        html += `<div class="show-link"><a href="${API_BASE}/shows/${show.showSlug}" target="_blank">Open show page</a></div>`;
+
+        for (const link of show.links) {
+            html += '<div class="show-list-link">';
+            html += `<div class="connection-link">${escapeHtml(link.fromName)} &rarr; ${escapeHtml(link.toName)}</div>`;
+            html += `<div class="roles">${escapeHtml(link.fromName)}: ${escapeHtml(link.fromRole)} | ${escapeHtml(link.toName)}: ${escapeHtml(link.toRole)}</div>`;
+            html += '</div>';
+        }
+
+        html += '</div>';
+        html += '</details>';
+    }
+
+    html += '</div>';
+    html += '</div>';
+
+    return html;
+}
+
+function renderResultSummary(result, interim = false) {
+    const pathCount = result.paths.length;
+    const degrees = result.paths.map(p => p.path.length - 1);
+    const minDeg = Math.min(...degrees);
+    const maxDeg = Math.max(...degrees);
+    const modeLabel = isShortestOnlyMode() ? 'best / shortest search' : 'all-path search';
+
+    if (interim) {
+        resultSummaryEl.textContent = `Found ${pathCount} candidate path${pathCount !== 1 ? 's' : ''} so far in ${modeLabel}.`;
+        return;
+    }
+
+    if (minDeg === maxDeg) {
+        resultSummaryEl.textContent = `${modeLabel} finished. ${pathCount} path${pathCount !== 1 ? 's' : ''} at ${minDeg} degree${minDeg !== 1 ? 's' : ''}.`;
+    } else {
+        resultSummaryEl.textContent = `${modeLabel} finished. ${pathCount} path${pathCount !== 1 ? 's' : ''} across ${minDeg}-${maxDeg} degrees.`;
+    }
+}
+
+function renderInterimResults(result) {
+    resultsEl.classList.remove('hidden');
+    degreesBadge.textContent = 'Path found';
+    graphPanel.classList.remove('hidden');
+    renderResultSummary(result, true);
+    renderGraph(result);
+    renderDetails(result);
+}
+
+function getNoConnectionHtml(maxDepth) {
+    return `<div class="no-connection"><strong>No connection found within ${maxDepth} degree${maxDepth > 1 ? 's' : ''}.</strong><br>Try Deeper/Exhaustive depth, switch to All paths, or widen role types.</div>`;
 }
 
 // ── Main search handler ──
 
 findBtn.addEventListener('click', async () => {
+    const searchToken = ++currentSearchToken;
     const slug1 = person1Slug.value;
     const slug2 = person2Slug.value;
     if (!slug1 || !slug2) return;
@@ -821,18 +1231,29 @@ findBtn.addEventListener('click', async () => {
     findBtn.disabled = true;
     findBtn.textContent = 'Searching...';
     resetProgress();
+    resultSummaryEl.textContent = '';
+    currentHighlightedPath = null;
+    graphState = null;
 
     try {
-        const maxDepth = parseInt(maxDepthSelect.value, 10);
-        const result = await findAllConnections(slug1, slug2, maxDepth);
+        const maxDepth = getSelectedMaxDepth();
+        const result = await findAllConnections(slug1, slug2, maxDepth, {
+            onPathFound(interimResult) {
+                if (searchToken !== currentSearchToken) return;
+                renderInterimResults(interimResult);
+                showStatus('Path found. Finishing current search layer...');
+            },
+        });
 
         hideProgress();
+        hideStatus();
 
         if (!result) {
             resultsEl.classList.remove('hidden');
             degreesBadge.innerHTML = 'No connection found';
-            graphContainer.style.display = 'none';
-            detailsContent.innerHTML = `<div class="no-connection">No connection found within ${maxDepth} degree${maxDepth > 1 ? 's' : ''} of separation. Try increasing the max depth.</div>`;
+            graphPanel.classList.add('hidden');
+            resultSummaryEl.textContent = 'Try broader role filters or deeper search.';
+            detailsContent.innerHTML = getNoConnectionHtml(maxDepth);
             return;
         }
 
@@ -847,7 +1268,8 @@ findBtn.addEventListener('click', async () => {
             badgeHtml = `<span class="number">${pathCount}</span> path${pathCount !== 1 ? 's' : ''} across <span class="number">${minDeg}&ndash;${maxDeg}</span> degrees`;
         }
         degreesBadge.innerHTML = badgeHtml;
-        graphContainer.style.display = '';
+        renderResultSummary(result);
+        graphPanel.classList.remove('hidden');
         resultsEl.classList.remove('hidden');
 
         renderGraph(result);
@@ -858,7 +1280,7 @@ findBtn.addEventListener('click', async () => {
         url.searchParams.set('p1', slug1);
         url.searchParams.set('p2', slug2);
         url.searchParams.set('d', maxDepth);
-        if (shortestOnlyCheckbox.checked) {
+        if (isShortestOnlyMode()) {
             url.searchParams.set('sp', '1');
         } else {
             url.searchParams.delete('sp');
@@ -894,8 +1316,8 @@ shareBtn.addEventListener('click', () => {
     const url = new URL(window.location);
     url.searchParams.set('p1', person1Slug.value);
     url.searchParams.set('p2', person2Slug.value);
-    url.searchParams.set('d', maxDepthSelect.value);
-    if (shortestOnlyCheckbox.checked) {
+    url.searchParams.set('d', getSelectedMaxDepth());
+    if (isShortestOnlyMode()) {
         url.searchParams.set('sp', '1');
     } else {
         url.searchParams.delete('sp');
@@ -903,8 +1325,12 @@ shareBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(url.toString()).then(() => {
         shareBtn.textContent = 'Copied!';
         setTimeout(() => { shareBtn.textContent = 'Share Link'; }, 1500);
+    }).catch(() => {
+        window.prompt('Copy this link:', url.toString());
     });
 });
+
+resetViewBtn.addEventListener('click', resetGraphView);
 
 // ── URL params (shareable links) ──
 
@@ -917,8 +1343,12 @@ async function loadFromURL() {
 
     if (!p1 || !p2) return;
 
-    if (depth) maxDepthSelect.value = depth;
-    if (sp === '1') shortestOnlyCheckbox.checked = true;
+    if (depth) {
+        const depthInput = document.querySelector(`input[name="max-depth"][value="${depth}"]`);
+        if (depthInput) depthInput.checked = true;
+    }
+    const searchModeInput = document.querySelector(`input[name="search-mode"][value="${sp === '1' ? 'shortest' : 'all'}"]`);
+    if (searchModeInput) searchModeInput.checked = true;
 
     showStatus('Loading people from URL...');
 
@@ -931,12 +1361,14 @@ async function loadFromURL() {
         if (data1) {
             person1Input.value = data1.name;
             person1Slug.value = data1.slug;
-            person1Input.classList.add('selected');
+            setSelectedPersonUI(person1Input, person1Slug, person1Selected, data1);
+            prefetchPersonRoles(data1.slug);
         }
         if (data2) {
             person2Input.value = data2.name;
             person2Slug.value = data2.slug;
-            person2Input.classList.add('selected');
+            setSelectedPersonUI(person2Input, person2Slug, person2Selected, data2);
+            prefetchPersonRoles(data2.slug);
         }
 
         hideStatus();
@@ -950,15 +1382,54 @@ async function loadFromURL() {
     }
 }
 
+function swapPeople() {
+    const left = {
+        value: person1Input.value,
+        slug: person1Slug.value,
+    };
+
+    person1Input.value = person2Input.value;
+    person1Slug.value = person2Slug.value;
+    person2Input.value = left.value;
+    person2Slug.value = left.slug;
+
+    syncSelectedBadge(person1Input, person1Slug, person1Selected);
+    syncSelectedBadge(person2Input, person2Slug, person2Selected);
+    updateFindButton();
+}
+
+function syncSelectedBadge(input, slugInput, selectedEl) {
+    if (slugInput.value) {
+        setSelectedPersonUI(input, slugInput, selectedEl, {
+            name: input.value,
+            slug: slugInput.value,
+        });
+    } else {
+        setSelectedPersonUI(input, slugInput, selectedEl, null);
+    }
+}
+
 // ── Utility ──
 
 function escapeHtml(str) {
+    const textarea = document.createElement('textarea');
+    textarea.innerHTML = str;
+
     const div = document.createElement('div');
-    div.textContent = str;
+    div.textContent = textarea.value;
     return div.innerHTML;
 }
 
 // ── Init ──
+
+progressToggle.addEventListener('click', () => {
+    const expanded = progressToggle.getAttribute('aria-expanded') === 'true';
+    progressToggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+    progressToggle.textContent = expanded ? 'Show technical progress' : 'Hide technical progress';
+    progressLog.classList.toggle('hidden', expanded);
+});
+
+swapBtn.addEventListener('click', swapPeople);
 
 setupAutocomplete(person1Input, person1List, person1Slug);
 setupAutocomplete(person2Input, person2List, person2Slug);

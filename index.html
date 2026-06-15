@@ -16,18 +16,29 @@
 
         <div class="search-panel">
             <div class="input-group">
-                <label for="person1">Person 1</label>
+                <label for="person1">Start person</label>
                 <div class="autocomplete-wrapper">
-                    <input type="text" id="person1" placeholder="Start typing a name..." autocomplete="off">
-                    <div class="autocomplete-list" id="person1-list"></div>
+                    <input type="text" id="person1" placeholder="Start typing a name..." autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="person1-list">
+                    <div class="autocomplete-list" id="person1-list" role="listbox"></div>
+                </div>
+                <div class="input-meta">
+                    <span class="selected-person hidden" id="person1-selected"></span>
+                    <span class="input-hint">Pick exact person from dropdown.</span>
                 </div>
                 <input type="hidden" id="person1-slug">
             </div>
+            <div class="swap-control">
+                <button id="swap-btn" type="button" title="Swap people" aria-label="Swap people">Swap</button>
+            </div>
             <div class="input-group">
-                <label for="person2">Person 2</label>
+                <label for="person2">Target person</label>
                 <div class="autocomplete-wrapper">
-                    <input type="text" id="person2" placeholder="Start typing a name..." autocomplete="off">
-                    <div class="autocomplete-list" id="person2-list"></div>
+                    <input type="text" id="person2" placeholder="Start typing a name..." autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="person2-list">
+                    <div class="autocomplete-list" id="person2-list" role="listbox"></div>
+                </div>
+                <div class="input-meta">
+                    <span class="selected-person hidden" id="person2-selected"></span>
+                    <span class="input-hint">Pick exact person from dropdown.</span>
                 </div>
                 <input type="hidden" id="person2-slug">
             </div>
@@ -38,19 +49,20 @@
                     <label><input type="checkbox" value="prod" checked> Crew/Production</label>
                     <label><input type="checkbox" value="band" checked> Band</label>
                 </fieldset>
-                <div class="depth-control">
-                    <label for="max-depth">Max degrees of separation</label>
-                    <select id="max-depth">
-                        <option value="1">1 (direct only)</option>
-                        <option value="2" selected>2</option>
-                        <option value="3">3</option>
-                        <option value="4">4</option>
-                    </select>
-                </div>
-                <label class="shortest-only-control">
-                    <input type="checkbox" id="shortest-only"> Shortest path only
-                </label>
+                <fieldset class="mode-control">
+                    <legend>Search mode</legend>
+                    <label><input type="radio" name="search-mode" value="shortest" checked> Best / Shortest</label>
+                    <label><input type="radio" name="search-mode" value="all"> All paths</label>
+                </fieldset>
+                <fieldset class="depth-control">
+                    <legend>Depth</legend>
+                    <label><input type="radio" name="max-depth" value="1"> Direct</label>
+                    <label><input type="radio" name="max-depth" value="2" checked> Quick</label>
+                    <label><input type="radio" name="max-depth" value="3"> Deeper</label>
+                    <label><input type="radio" name="max-depth" value="4"> Exhaustive</label>
+                </fieldset>
             </div>
+            <div class="search-guidance">Quick explores 2 degrees. Deeper and exhaustive may take longer.</div>
             <button id="find-btn" disabled>Find Connection</button>
         </div>
 
@@ -65,24 +77,32 @@
                     <span id="progress-paths">0 paths</span>
                 </span>
             </div>
+            <div class="progress-summary" id="progress-summary">Preparing search...</div>
             <div class="progress-bar-track">
                 <div class="progress-bar-fill" id="progress-bar"></div>
             </div>
-            <div class="progress-log" id="progress-log"></div>
+            <button id="progress-toggle" type="button" class="progress-toggle" aria-expanded="false">Show technical progress</button>
+            <div class="progress-log hidden" id="progress-log"></div>
         </div>
 
         <div id="results" class="hidden">
             <div class="results-header">
                 <div id="degrees-badge" class="degrees-badge"></div>
+                <div id="result-summary" class="result-summary"></div>
                 <div class="results-actions">
+                    <button id="reset-view-btn" title="Reset graph view">Reset View</button>
                     <button id="export-btn" title="Export graph as PNG">Export PNG</button>
                     <button id="share-btn" title="Copy shareable link">Share Link</button>
                 </div>
             </div>
-            <div id="graph-container"></div>
-            <div id="details-panel">
-                <h3>Connection Details</h3>
-                <div id="details-content"></div>
+            <div class="results-body">
+                <div id="graph-panel">
+                    <div id="graph-container"></div>
+                </div>
+                <div id="details-panel">
+                    <h3>Connection Details</h3>
+                    <div id="details-content"></div>
+                </div>
             </div>
         </div>
     </div>
