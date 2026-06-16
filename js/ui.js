@@ -2,12 +2,21 @@ import { searchPeople, prefetchPersonRoles } from './api.js';
 import { appState } from './state.js';
 
 export function escapeHtml(str) {
-    const textarea = document.createElement('textarea');
-    textarea.innerHTML = str;
-
     const div = document.createElement('div');
-    div.textContent = textarea.value;
+    div.textContent = str;
     return div.innerHTML;
+}
+
+function createSearchTimingState(status) {
+    return {
+        startedAt: performance.now(),
+        activeLabel: null,
+        phases: [],
+        completed: false,
+        status,
+        resultSummary: '',
+        totals: { people: 0, shows: 0, connections: 0 },
+    };
 }
 
 export function setSelectedPersonUI(input, slugInput, selectedEl, person) {
@@ -231,15 +240,8 @@ function finalizeActiveTiming(now = performance.now()) {
 function touchTimingPhase(depthLabel) {
     const now = performance.now();
     if (!appState.searchTiming) {
-        appState.searchTiming = {
-            startedAt: now,
-            activeLabel: null,
-            phases: [],
-            completed: false,
-            status: 'Running search...',
-            resultSummary: '',
-            totals: { people: 0, shows: 0, connections: 0 },
-        };
+        appState.searchTiming = createSearchTimingState('Running search...');
+        appState.searchTiming.startedAt = now;
     }
 
     const timing = appState.searchTiming;
@@ -327,15 +329,7 @@ export function resetProgress() {
     setProgressMetric(progressPathsEl, 0, 'path');
     progressSummaryEl.textContent = 'Preparing search...';
     appState.cacheHits = 0;
-    appState.searchTiming = {
-        startedAt: performance.now(),
-        activeLabel: null,
-            phases: [],
-            completed: false,
-            status: 'Preparing search...',
-            resultSummary: '',
-            totals: { people: 0, shows: 0, connections: 0 },
-        };
+    appState.searchTiming = createSearchTimingState('Preparing search...');
     stopTimingTicker();
     ensureTimingTicker();
     renderTimingCallout();

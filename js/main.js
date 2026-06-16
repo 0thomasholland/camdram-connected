@@ -59,6 +59,10 @@ const dom = {
 
 setDomRefs(dom);
 
+function isStaleSearch(searchToken) {
+    return searchToken !== appState.currentSearchToken;
+}
+
 async function loadFromURL() {
     const params = new URLSearchParams(window.location.search);
     const p1 = params.get('p1');
@@ -139,12 +143,14 @@ async function handleSearch() {
         const selectedDepths = getSelectedDepths();
         const result = await findAllConnections(slug1, slug2, selectedDepths, {
             onPathFound(interimResult) {
-                if (searchToken !== appState.currentSearchToken) return;
+                if (isStaleSearch(searchToken)) return;
                 renderInterimResults(interimResult);
             },
             onProgress: updateProgress,
             onLog: logFetch,
         });
+
+        if (isStaleSearch(searchToken)) return;
 
         hideProgress();
         hideStatus();
@@ -178,10 +184,12 @@ async function handleSearch() {
         renderGraph(result);
         renderDetails(result);
     } catch (err) {
+        if (isStaleSearch(searchToken)) return;
         hideProgress();
         completeSearchTiming(false, err.message || 'Search failed');
         showError(err.message || 'Something went wrong');
     } finally {
+        if (isStaleSearch(searchToken)) return;
         dom.findBtn.disabled = false;
         dom.findBtn.textContent = 'Find Connection';
         updateFindButton();
