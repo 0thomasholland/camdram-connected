@@ -3,13 +3,40 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Camdram Connected</title>
+    <title>Camdram Connected | Find Cambridge Theatre Connections</title>
+    <meta name="description" content="Find connection paths between any two people in Cambridge theatre using Camdram credits, shared shows, and interactive graph search.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://camdramconnected.net/">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Camdram Connected">
+    <meta property="og:title" content="Camdram Connected | Find Cambridge Theatre Connections">
+    <meta property="og:description" content="Explore shared shows, roles, and shortest paths between Cambridge theatre people with Camdram Connected.">
+    <meta property="og:url" content="https://camdramconnected.net/">
+    <meta property="og:image" content="https://camdramconnected.net/assets/images/camdram-connected-hero.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Camdram Connected | Find Cambridge Theatre Connections">
+    <meta name="twitter:description" content="Search Camdram credits to find shortest and multi-step links between people in Cambridge theatre.">
+    <meta name="twitter:image" content="https://camdramconnected.net/assets/images/camdram-connected-hero.png">
     <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" sizes="any">
     <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
     <link rel="stylesheet" href="/css/base.css">
     <link rel="stylesheet" href="/css/main.css">
     <link rel="stylesheet" href="/css/search.css">
     <link rel="stylesheet" href="/css/results.css">
+    <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@type": "WebSite",
+            "name": "Camdram Connected",
+            "url": "https://camdramconnected.net/",
+            "description": "Find connection paths between any two people in Cambridge theatre using Camdram credits and shared shows.",
+            "image": "https://camdramconnected.net/assets/images/camdram-connected-hero.png",
+            "about": {
+                "@type": "Thing",
+                "name": "Cambridge theatre"
+            }
+        }
+    </script>
 </head>
 <body>
     <div id="app">
@@ -79,9 +106,16 @@
             <div class="search-guidance">Choose exact degrees to search and show. Higher degrees may take longer.</div>
         </div>
 
-        <div id="status" class="status hidden"></div>
+        <main>
+            <section class="seo-copy" aria-labelledby="how-it-works-title">
+                <h2 id="how-it-works-title">Search Cambridge theatre links by shared Camdram credits</h2>
+                <p>Camdram Connected helps you find how two people are linked across Cambridge theatre productions. Search uses Camdram cast, crew, production, and band credits to trace shortest paths or collect every route within selected degrees.</p>
+                <p>Results show both an interactive graph and step-by-step connection details, making it easier to explore shared shows and collaborators across Cambridge theatre network.</p>
+            </section>
 
-        <div class="search-feedback">
+            <div id="status" class="status hidden"></div>
+
+            <div class="search-feedback">
             <div id="progress-container" class="progress-container hidden">
                 <div class="progress-header">
                     <div class="progress-summary-block">
@@ -147,6 +181,7 @@
                 </div>
             </div>
         </div>
+        </main>
 
         <footer class="site-footer">
             <span>Made by <a href="https://thomasholland.uk" target="_blank" rel="noopener noreferrer">Thomas Holland</a></span>
