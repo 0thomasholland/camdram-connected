@@ -443,8 +443,49 @@ function isShortestOnlyMode() {
     return document.querySelector('input[name="search-mode"]:checked')?.value !== 'all';
 }
 
-function getSelectedMaxDepth() {
-    return parseInt(document.querySelector('input[name="max-depth"]:checked')?.value || '2', 10);
+function getSelectedDepths() {
+    const depths = Array.from(document.querySelectorAll('input[name="degree-depth"]:checked'))
+        .map(input => parseInt(input.value, 10))
+        .filter(Number.isInteger)
+        .sort((a, b) => a - b);
+
+    return depths.length > 0 ? depths : [1, 2];
+}
+
+function isSelectedDegree(degree, selectedDepths) {
+    return selectedDepths.includes(degree);
+}
+
+function formatSelectedDegrees(selectedDepths) {
+    const labels = selectedDepths.map((depth) => `${depth}${getOrdinalSuffix(depth)}`);
+    if (labels.length === 1) return labels[0];
+    if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+    return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`;
+}
+
+function getOrdinalSuffix(value) {
+    if (value % 100 >= 11 && value % 100 <= 13) return 'th';
+    if (value % 10 === 1) return 'st';
+    if (value % 10 === 2) return 'nd';
+    if (value % 10 === 3) return 'rd';
+    return 'th';
+}
+
+function parseDepthParam(depthParam) {
+    if (!depthParam) return [];
+
+    if (!depthParam.includes(',')) {
+        const legacyMaxDepth = parseInt(depthParam, 10);
+        if (Number.isInteger(legacyMaxDepth) && legacyMaxDepth >= 1 && legacyMaxDepth <= 4) {
+            return Array.from({ length: legacyMaxDepth }, (_, index) => index + 1);
+        }
+    }
+
+    return depthParam.split(',')
+        .map(value => parseInt(value, 10))
+        .filter(value => Number.isInteger(value) && value >= 1 && value <= 4)
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .sort((a, b) => a - b);
 }
 
 /**
@@ -614,9 +655,10 @@ function formatEdgeTitle(edge) {
 
 // ── Connection finder — all paths (unidirectional BFS) ──
 
-async function findAllUnidirectional(slug1, slug2, maxDepth, options = {}) {
+async function findAllUnidirectional(slug1, slug2, selectedDepths, options = {}) {
     const roleTypes = getActiveRoleTypes();
     const { onPathFound } = options;
+    const maxDepth = Math.max(...selectedDepths);
 
     const allPaths = [];
     const seenPathKeys = new Set();
@@ -663,8 +705,9 @@ async function findAllUnidirectional(slug1, slug2, maxDepth, options = {}) {
                             path: [...entry.path, coSlug],
                             edges: newEdges,
                         };
+                        const degree = found.path.length - 1;
                         const pathKey = found.path.join('>');
-                        if (!seenPathKeys.has(pathKey)) {
+                        if (isSelectedDegree(degree, selectedDepths) && !seenPathKeys.has(pathKey)) {
                             seenPathKeys.add(pathKey);
                             allPaths.push(found);
                             const pathNames = found.path.map(s => peopleNames.get(s) || s).join(' → ');
@@ -696,9 +739,10 @@ async function findAllUnidirectional(slug1, slug2, maxDepth, options = {}) {
 
 // ── Connection finder — shortest path (bidirectional BFS) ──
 
-async function findShortestBidirectional(slug1, slug2, maxDepth, options = {}) {
+async function findShortestBidirectional(slug1, slug2, selectedDepths, options = {}) {
     const roleTypes = getActiveRoleTypes();
     const { onPathFound } = options;
+    const maxDepth = Math.max(...selectedDepths);
 
     // Forward: slug1 → slug2, Backward: slug2 → slug1
     let forwardFrontier = [slug1];
@@ -780,8 +824,9 @@ async function findShortestBidirectional(slug1, slug2, maxDepth, options = {}) {
                                 const combined = expandForward
                                     ? combinePaths(fwd, bwd)
                                     : combinePaths(bwd, fwd);
+                                const degree = combined.path.length - 1;
                                 const pathKey = combined.path.join('>');
-                                if (seenPathKeys.has(pathKey)) continue;
+                                if (!isSelectedDegree(degree, selectedDepths) || seenPathKeys.has(pathKey)) continue;
                                 seenPathKeys.add(pathKey);
                                 foundPaths.push(combined);
                                 const pathNames = combined.path.map(s => peopleNames.get(s) || s).join(' → ');
@@ -855,16 +900,19 @@ function combinePaths(forward, backward) {
 
 // ── Connection finder dispatcher ──
 
-async function findAllConnections(slug1, slug2, maxDepth, options = {}) {
+async function findAllConnections(slug1, slug2, selectedDepths, options = {}) {
     const roleTypes = getActiveRoleTypes();
     if (roleTypes.length === 0) {
         throw new Error('Select at least one role type');
     }
+    if (selectedDepths.length === 0) {
+        throw new Error('Select at least one degree');
+    }
 
     if (isShortestOnlyMode()) {
-        return findShortestBidirectional(slug1, slug2, maxDepth, options);
+        return findShortestBidirectional(slug1, slug2, selectedDepths, options);
     } else {
-        return findAllUnidirectional(slug1, slug2, maxDepth, options);
+        return findAllUnidirectional(slug1, slug2, selectedDepths, options);
     }
 }
 
@@ -873,6 +921,8 @@ async function findAllConnections(slug1, slug2, maxDepth, options = {}) {
 function renderGraph(result, { preserveView = false } = {}) {
     const { paths, peopleNames: pNames } = result;
     const palette = GRAPH_PALETTE;
+    const minEdgeWidth = 2;
+    const maxEdgeWidth = 10;
 
     const startSlug = paths[0].path[0];
     const endSlug = paths[0].path[paths[0].path.length - 1];
@@ -885,6 +935,7 @@ function renderGraph(result, { preserveView = false } = {}) {
     const edgePathMap = new Map();
     const nodeBaseStyles = new Map();
     const edgeBaseStyles = new Map();
+    const edgeShowCounts = new Map();
 
     currentHighlightedPath = null;
     graphDefaultView = null;
@@ -928,6 +979,7 @@ function renderGraph(result, { preserveView = false } = {}) {
         for (const edge of edges) {
             const key = `person:${edge.from}->person:${edge.to}`;
             addPathMembership(edgePathMap, key, pathIndex);
+            edgeShowCounts.set(key, edge.shows.length);
             if (!edgeKeys.has(key)) {
                 edgeKeys.add(key);
                 edgeData.push({
@@ -935,13 +987,23 @@ function renderGraph(result, { preserveView = false } = {}) {
                     from: `person:${edge.from}`,
                     to: `person:${edge.to}`,
                     color: { color: path.length === 2 ? palette.activeEdge : palette.baseEdge, highlight: palette.activeEdge },
-                    width: 2,
+                    width: minEdgeWidth,
                     smooth: false,
                     title: formatEdgeTitle(edge),
                 });
-                edgeBaseStyles.set(key, { color: { color: path.length === 2 ? palette.activeEdge : palette.baseEdge, highlight: palette.activeEdge }, width: 2 });
+                edgeBaseStyles.set(key, { color: { color: path.length === 2 ? palette.activeEdge : palette.baseEdge, highlight: palette.activeEdge }, width: minEdgeWidth });
             }
         }
+    }
+
+    const edgeShowCountRange = getRange(edgeShowCounts.values());
+    for (const edge of edgeData) {
+        const width = scaleBetween(edgeShowCounts.get(edge.id), minEdgeWidth, maxEdgeWidth, edgeShowCountRange);
+        edge.width = width;
+        edgeBaseStyles.set(edge.id, {
+            ...edgeBaseStyles.get(edge.id),
+            width,
+        });
     }
 
     const data = {
@@ -1022,6 +1084,24 @@ function addPathMembership(pathMap, key, pathIndex) {
     pathMap.get(key).add(pathIndex);
 }
 
+function getRange(values) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const value of values) {
+        if (value < min) min = value;
+        if (value > max) max = value;
+    }
+    return { min, max };
+}
+
+function scaleBetween(value, minOutput, maxOutput, { min, max }) {
+    if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
+        return (minOutput + maxOutput) / 2;
+    }
+    const ratio = (value - min) / (max - min);
+    return minOutput + (maxOutput - minOutput) * ratio;
+}
+
 function setHighlightedPath(pathIndex) {
     if (!graphState) return;
 
@@ -1054,7 +1134,7 @@ function setHighlightedPath(pathIndex) {
         const baseStyle = graphState.edgeBaseStyles.get(edge.id);
         return {
             id: edge.id,
-            width: inPath ? 3 : 1.2,
+            width: inPath ? baseStyle.width : Math.max(1, baseStyle.width * 0.35),
             color: inPath ? { color: baseStyle.color.color, highlight: palette.activeEdge } : { color: palette.mutedEdge, highlight: baseStyle.color.highlight },
         };
     });
@@ -1339,8 +1419,8 @@ function renderInterimResults(result) {
     renderDetails(result);
 }
 
-function getNoConnectionHtml(maxDepth) {
-    return `<div class="no-connection"><strong>No connection found within ${maxDepth} degree${maxDepth > 1 ? 's' : ''}.</strong><br>Try Deeper/Exhaustive depth, switch to All paths, or widen role types.</div>`;
+function getNoConnectionHtml(selectedDepths) {
+    return `<div class="no-connection"><strong>No connection found at selected degree${selectedDepths.length !== 1 ? 's' : ''}: ${formatSelectedDegrees(selectedDepths)}.</strong><br>Try adding more degrees, switch to All paths, or widen role types.</div>`;
 }
 
 // ── Main search handler ──
@@ -1367,8 +1447,8 @@ findBtn.addEventListener('click', async () => {
     graphDefaultView = null;
 
     try {
-        const maxDepth = getSelectedMaxDepth();
-        const result = await findAllConnections(slug1, slug2, maxDepth, {
+        const selectedDepths = getSelectedDepths();
+        const result = await findAllConnections(slug1, slug2, selectedDepths, {
             onPathFound(interimResult) {
                 if (searchToken !== currentSearchToken) return;
                 renderInterimResults(interimResult);
@@ -1383,8 +1463,8 @@ findBtn.addEventListener('click', async () => {
             resultsEl.classList.remove('hidden');
             degreesBadge.innerHTML = 'No connection found';
             graphPanel.classList.add('hidden');
-            resultSummaryEl.textContent = 'Try broader role filters or deeper search.';
-            detailsContent.innerHTML = getNoConnectionHtml(maxDepth);
+            resultSummaryEl.textContent = `No paths found for ${formatSelectedDegrees(selectedDepths)} degree${selectedDepths.length !== 1 ? 's' : ''}.`;
+            detailsContent.innerHTML = getNoConnectionHtml(selectedDepths);
             return;
         }
 
@@ -1410,7 +1490,7 @@ findBtn.addEventListener('click', async () => {
         const url = new URL(window.location);
         url.searchParams.set('p1', slug1);
         url.searchParams.set('p2', slug2);
-        url.searchParams.set('d', maxDepth);
+        url.searchParams.set('d', selectedDepths.join(','));
         if (isShortestOnlyMode()) {
             url.searchParams.set('sp', '1');
         } else {
@@ -1447,7 +1527,7 @@ shareBtn.addEventListener('click', () => {
     const url = new URL(window.location);
     url.searchParams.set('p1', person1Slug.value);
     url.searchParams.set('p2', person2Slug.value);
-    url.searchParams.set('d', getSelectedMaxDepth());
+    url.searchParams.set('d', getSelectedDepths().join(','));
     if (isShortestOnlyMode()) {
         url.searchParams.set('sp', '1');
     } else {
@@ -1475,8 +1555,12 @@ async function loadFromURL() {
     if (!p1 || !p2) return;
 
     if (depth) {
-        const depthInput = document.querySelector(`input[name="max-depth"][value="${depth}"]`);
-        if (depthInput) depthInput.checked = true;
+        const selectedDepths = parseDepthParam(depth);
+        if (selectedDepths.length > 0) {
+            document.querySelectorAll('input[name="degree-depth"]').forEach((input) => {
+                input.checked = selectedDepths.includes(parseInt(input.value, 10));
+            });
+        }
     }
     const searchModeInput = document.querySelector(`input[name="search-mode"][value="${sp === '1' ? 'shortest' : 'all'}"]`);
     if (searchModeInput) searchModeInput.checked = true;
@@ -1558,6 +1642,13 @@ progressToggle.addEventListener('click', () => {
     progressToggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
     progressToggle.textContent = expanded ? 'Show technical progress' : 'Hide technical progress';
     progressLog.classList.toggle('hidden', expanded);
+});
+
+document.querySelectorAll('input[name="degree-depth"]').forEach((input) => {
+    input.addEventListener('change', () => {
+        if (document.querySelectorAll('input[name="degree-depth"]:checked').length > 0) return;
+        input.checked = true;
+    });
 });
 
 swapBtn.addEventListener('click', swapPeople);

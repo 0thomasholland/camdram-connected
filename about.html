@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About | Camdram Connected</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" integrity="sha512-Evv84Mr4kqVGRNSgIGL/F/aIDqQb7xQ2vcrdIwxfjThSH8CSR7PBEakCr51Ck+w+/U6swU2Im1vVX0SVk9ABhg==" crossorigin="anonymous" referrerpolicy="no-referrer">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app" class="about-page">
+        <header>
+            <nav class="site-nav" aria-label="Primary">
+                <a class="site-nav-link" href="/">Search</a>
+                <a class="site-nav-link active" href="/about.html" aria-current="page">About</a>
+            </nav>
+            <h1>About Camdram Connected</h1>
+            <p class="subtitle">How site works, what it is built with, and why some searches take longer than others.</p>
+        </header>
+
+        <main class="about-layout">
+            <section class="about-card about-intro">
+                <h2>What It Does</h2>
+                <p>Camdram Connected explores Camdram credits to find links between two people in Cambridge theatre. Each connection is built from shared shows and roles, then displayed as both graph and step-by-step explanation.</p>
+            </section>
+
+            <section class="about-card">
+                <h2>Tech Stack</h2>
+                <div class="tech-grid">
+                    <article class="tech-item">
+                        <div class="about-item-icon" aria-hidden="true"><i class="fa-brands fa-js"></i></div>
+                        <h3>Vanilla JavaScript</h3>
+                        <p>Runs search UI, API access, in-memory caches, and pathfinding logic in one client-side app.</p>
+                    </article>
+                    <article class="tech-item">
+                        <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-diagram-project"></i></div>
+                        <h3>vis-network</h3>
+                        <p>Draws interactive people-and-show graph with pan, zoom, and node highlighting.</p>
+                    </article>
+                    <article class="tech-item">
+                        <div class="about-item-icon" aria-hidden="true"><i class="fa-brands fa-cloudflare"></i></div>
+                        <h3>Cloudflare Pages</h3>
+                        <p>Hosts site as static assets with no build step.</p>
+                    </article>
+                    <article class="tech-item">
+                        <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-shield-halved"></i></div>
+                        <h3>Pages Function Proxy</h3>
+                        <p>Handles `/api/*` requests, adds CORS headers, and caches Camdram responses at edge.</p>
+                    </article>
+                    <article class="tech-item">
+                        <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-masks-theater"></i></div>
+                        <h3>Camdram API</h3>
+                        <p>Provides source data for people, productions, and role credits.</p>
+                    </article>
+                </div>
+            </section>
+
+            <section class="about-card">
+                <h2>Algorithms</h2>
+                <div class="algorithm-grid">
+                    <article class="algorithm-item">
+                        <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-keyboard"></i></div>
+                        <h3>Autocomplete</h3>
+                        <p>Waits briefly after each burst of typing before searching Camdram. Debouncing cuts duplicate queries while still feeling immediate, and exact selection avoids confusion between similar names.</p>
+                    </article>
+                    <article class="algorithm-item">
+                        <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-gauge-high"></i></div>
+                        <h3>Rate Limiting</h3>
+                        <p>Inserts small delay between outbound requests. Search often needs many person-role and show-role lookups in sequence, so paced requests reduce load spikes and keep behaviour predictable.</p>
+                    </article>
+                    <article class="algorithm-item">
+                        <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-route"></i></div>
+                        <h3>Breadth-First Search</h3>
+                        <p>Treats graph as person to show to person hops. Shortest-path mode explores layer by layer, so first successful route found is also minimum degree connection.</p>
+                    </article>
+                    <article class="algorithm-item">
+                        <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-arrows-split-up-and-left"></i></div>
+                        <h3>All-Path Search</h3>
+                        <p>Continues collecting routes at same depth instead of stopping at first hit. That reveals multiple valid explanations, but branch count can grow quickly for well-connected people.</p>
+                    </article>
+                    <article class="algorithm-item">
+                        <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-binoculars"></i></div>
+                        <h3>Lazy Graph Discovery</h3>
+                        <p>Fetches people and show data only when frontier reaches them. App never tries to preload whole theatre network, which keeps initial searches practical.</p>
+                    </article>
+                    <article class="algorithm-item">
+                        <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-database"></i></div>
+                        <h3>Caching</h3>
+                        <p>Stores fetched people, role lists, and show casts in memory for current session. Repeated searches can reuse known data instead of hitting API again.</p>
+                    </article>
+                    <article class="algorithm-item">
+                        <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-repeat"></i></div>
+                        <h3>Visited-State Tracking</h3>
+                        <p>Remembers explored people and shows so search does not loop through repeated collaborations. Important because Cambridge theatre graph is dense and highly interconnected.</p>
+                    </article>
+                    <article class="algorithm-item">
+                        <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-ruler-combined"></i></div>
+                        <h3>Depth Limits</h3>
+                        <p>Caps how far search can expand. Quick mode prunes aggressively for responsiveness, while deeper modes spend more requests and processing to uncover longer routes.</p>
+                    </article>
+                </div>
+            </section>
+
+            <section class="about-card">
+                <h2>Why Search Time Varies</h2>
+                <p>Some people have worked on many productions, which creates much larger search branches. Quick mode stops earlier. Deeper and exhaustive modes explore more graph, so they can reveal more paths but require more API requests and processing.</p>
+            </section>
+        </main>
+
+        <footer class="site-footer">
+            <span>Made by <a href="https://thomasholland.uk" target="_blank" rel="noopener noreferrer">Thomas Holland</a></span>
+            <span class="site-footer-separator" aria-hidden="true">|</span>
+            <a href="https://github.com/0thomasholland/camdram-connected" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+        </footer>
+    </div>
+</body>
+</html>

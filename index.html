@@ -11,6 +11,10 @@
 <body>
     <div id="app">
         <header>
+            <nav class="site-nav" aria-label="Primary">
+                <a class="site-nav-link active" href="/">Search</a>
+                <a class="site-nav-link" href="/about.html">About</a>
+            </nav>
             <h1>Camdram Connected</h1>
             <p class="subtitle">Find the connection between any two people in Cambridge theatre</p>
         </header>
@@ -52,18 +56,18 @@
                 </fieldset>
                 <fieldset class="mode-control">
                     <legend>Search mode</legend>
-                    <label><input type="radio" name="search-mode" value="shortest" checked> Best / Shortest</label>
-                    <label><input type="radio" name="search-mode" value="all"> All paths</label>
+                    <label><input type="radio" name="search-mode" value="shortest" checked> Shortest paths only</label>
+                    <label><input type="radio" name="search-mode" value="all"> All paths in selected degrees</label>
                 </fieldset>
                 <fieldset class="depth-control">
-                    <legend>Depth</legend>
-                    <label><input type="radio" name="max-depth" value="1"> Direct</label>
-                    <label><input type="radio" name="max-depth" value="2" checked> Quick</label>
-                    <label><input type="radio" name="max-depth" value="3"> Deeper</label>
-                    <label><input type="radio" name="max-depth" value="4"> Exhaustive</label>
+                    <legend>Degrees to show</legend>
+                    <label><input type="checkbox" name="degree-depth" value="1" checked> 1st</label>
+                    <label><input type="checkbox" name="degree-depth" value="2" checked> 2nd</label>
+                    <label><input type="checkbox" name="degree-depth" value="3"> 3rd</label>
+                    <label><input type="checkbox" name="degree-depth" value="4"> 4th</label>
                 </fieldset>
             </div>
-            <div class="search-guidance">Quick explores 2 degrees. Deeper and exhaustive may take longer.</div>
+            <div class="search-guidance">Choose exact degrees to search and show. Higher degrees may take longer.</div>
             <button id="find-btn" disabled>Find Connection</button>
         </div>
 
@@ -106,6 +110,12 @@
                 </div>
             </div>
         </div>
+
+        <footer class="site-footer">
+            <span>Made by <a href="https://thomasholland.uk" target="_blank" rel="noopener noreferrer">Thomas Holland</a></span>
+            <span class="site-footer-separator" aria-hidden="true">|</span>
+            <a href="https://github.com/0thomasholland/camdram-connected" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+        </footer>
     </div>
 
     <script src="app.js"></script>
