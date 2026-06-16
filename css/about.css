@@ -169,8 +169,52 @@
         font-size: 2rem;
     }
 
+    .about-layout {
+        gap: 0.85rem;
+    }
+
+    .about-card {
+        padding: 1.1rem;
+        border-radius: 14px;
+    }
+
     .about-analytics-callout {
         grid-template-columns: 1fr;
+    }
+
+    .about-callout-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.65rem;
+    }
+
+    .about-callout-stat-primary {
+        grid-column: 1 / -1;
+    }
+
+    .about-callout-stat,
+    .about-callout-stat-primary {
+        min-height: 8.5rem;
+    }
+
+    .about-callout-stat-primary .about-callout-value {
+        font-size: clamp(2rem, 9vw, 3rem);
+    }
+
+    .tech-grid,
+    .algorithm-grid {
+        gap: 0.75rem;
+    }
+
+    .tech-item,
+    .algorithm-item {
+        padding: 0.9rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .about-hero-header h1 {
+        font-size: 1.85rem;
+        line-height: 1.05;
     }
 
     .about-callout-stats {
@@ -178,10 +222,10 @@
     }
 
     .about-callout-stat-primary {
-        min-height: 8.5rem;
+        grid-column: auto;
     }
 
-    .about-callout-stat-primary .about-callout-value {
-        font-size: clamp(2rem, 9vw, 3rem);
+    .about-card h2 {
+        margin-bottom: 0.65rem;
     }
 }

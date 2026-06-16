@@ -258,9 +258,44 @@ fieldset label {
 }
 
 @media (max-width: 640px) {
+    .search-panel {
+        gap: 0.95rem;
+        padding: 1.1rem;
+        border-radius: 14px;
+    }
+
     .search-people-row,
     .filters {
         grid-template-columns: 1fr;
+    }
+
+    .input-group {
+        gap: 0.45rem;
+    }
+
+    .input-group label {
+        font-size: 0.82rem;
+    }
+
+    input[type="text"] {
+        padding: 0.78rem 0.85rem;
+        font-size: 1rem;
+    }
+
+    .input-meta {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.35rem;
+    }
+
+    .selected-person {
+        max-width: 100%;
+        overflow-wrap: anywhere;
+    }
+
+    .input-hint {
+        font-size: 0.76rem;
+        line-height: 1.35;
     }
 
     .search-people-row > .input-group:first-child,
@@ -280,6 +315,30 @@ fieldset label {
     #find-btn {
         width: auto;
         flex: 1;
+        padding: 0.95rem 0.8rem;
+        font-size: 1rem;
+    }
+
+    fieldset {
+        padding: 0.7rem 0.85rem 0.85rem;
+        gap: 0.65rem;
+    }
+
+    fieldset label {
+        font-size: 0.92rem;
+        line-height: 1.3;
+    }
+
+    .mode-control,
+    .depth-control {
+        display: grid;
+        gap: 0.65rem;
+    }
+
+    .search-guidance {
+        margin-top: 0;
+        font-size: 0.78rem;
+        line-height: 1.4;
     }
 }
 
