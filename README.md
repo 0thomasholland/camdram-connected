@@ -1,7 +1,7 @@
 # Camdram Connected
 
 <p align="center">
-  <img src="./camdram-connected-hero.png" alt="Camdram Connected hero image" width="1200">
+  <img src="./assets/images/camdram-connected-hero.png" alt="Camdram Connected hero image" width="1200">
 </p>
 
 Find shortest route between any two people in Cambridge theatre.
@@ -26,6 +26,30 @@ Find shortest route between any two people in Cambridge theatre.
 - Cloudflare Pages Function at `functions/api/[[path]].js` for Camdram CORS proxying and edge caching
 
 No build step. Static site plus lightweight serverless proxy.
+
+## Structure
+
+```text
+assets/
+  icons/
+  images/
+css/
+  base.css
+  main.css
+  search.css
+  results.css
+  about.css
+js/
+  constants.js
+  state.js
+  api.js
+  search.js
+  graph.js
+  ui.js
+  main.js
+functions/
+  api/[[path]].js
+```
 
 ## Run locally
 

@@ -1,0 +1,77 @@
+.about-layout {
+    display: grid;
+    gap: 1rem;
+}
+
+.about-intro {
+    background: linear-gradient(135deg, rgba(236, 103, 54, 0.12), rgba(255, 255, 255, 0.96));
+}
+
+.about-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.4rem;
+    box-shadow: 0 4px 15px rgba(58, 57, 58, 0.05);
+}
+
+.about-card h2 {
+    font-size: 1.1rem;
+    margin-bottom: 0.8rem;
+    color: var(--accent);
+}
+
+.about-card p {
+    color: var(--text);
+    line-height: 1.6;
+}
+
+.tech-grid,
+.algorithm-grid {
+    display: grid;
+    gap: 0.9rem;
+}
+
+.tech-grid {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.algorithm-grid {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.tech-item,
+.algorithm-item {
+    position: relative;
+    background: rgba(248, 238, 222, 0.55);
+    border: 1px solid rgba(58, 57, 58, 0.1);
+    border-radius: var(--radius);
+    padding: 1rem;
+}
+
+.about-item-icon {
+    width: 2.4rem;
+    height: 2.4rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 0.75rem;
+    border-radius: 999px;
+    background: var(--accent-glow);
+    color: var(--accent);
+    font-size: 1rem;
+}
+
+.tech-item h3,
+.algorithm-item h3 {
+    font-size: 0.95rem;
+    margin-bottom: 0.45rem;
+    color: var(--text);
+}
+
+.tech-item p,
+.algorithm-item p {
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+}

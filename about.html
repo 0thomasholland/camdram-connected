@@ -4,9 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>About | Camdram Connected</title>
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any">
+    <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" sizes="any">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" integrity="sha512-Evv84Mr4kqVGRNSgIGL/F/aIDqQb7xQ2vcrdIwxfjThSH8CSR7PBEakCr51Ck+w+/U6swU2Im1vVX0SVk9ABhg==" crossorigin="anonymous" referrerpolicy="no-referrer">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="/css/base.css">
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/about.css">
 </head>
 <body>
     <div id="app" class="about-page">
@@ -105,6 +107,20 @@
             <section class="about-card">
                 <h2>Why Search Time Varies</h2>
                 <p>Some people have worked on many productions, which creates much larger search branches. Quick mode stops earlier. Deeper and exhaustive modes explore more graph, so they can reveal more paths but require more API requests and processing.</p>
+            </section>
+
+            <section class="about-card">
+                <h2>Live Analytics</h2>
+                <p>GoatCounter dashboard, embedded directly into this page with minimal UI chrome.</p>
+                <div class="analytics-frame-wrap">
+                    <iframe
+                        class="analytics-frame"
+                        src="https://camdramconnected.goatcounter.com?hideui=1"
+                        title="Camdram Connected GoatCounter analytics"
+                        loading="lazy"
+                        referrerpolicy="strict-origin-when-cross-origin">
+                    </iframe>
+                </div>
             </section>
         </main>
 
