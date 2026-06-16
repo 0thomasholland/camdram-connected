@@ -1,66 +1,70 @@
 # Camdram Connected
 
-Find the connection between any two people in Cambridge theatre, using data from [Camdram](https://www.camdram.net).
+<p align="center">
+  <img src="./camdram-connected-hero.png" alt="Camdram Connected hero image" width="1200">
+</p>
 
-Enter two people's names, and the app finds how they're connected through shared shows — like "six degrees of separation" for Cambridge theatre.
+Find shortest route between any two people in Cambridge theatre.
 
-## Features
+`Camdram Connected` turns Camdram credits into explorable graph: people, shows, roles, shared history. Type two names, hit search, get clean visual path through Cambridge theatre network.
 
-- **Autocomplete search** for Camdram people
-- **BFS pathfinding** to find shortest connection between two people
-- **Interactive graph** visualization (vis.js) showing people and shows
-- **Filter by role type** (cast, crew/production, band)
-- **Configurable search depth** (1–4 degrees of separation)
-- **Shareable URLs** with pre-filled names
-- **Export** graph as PNG
+## Why it feels good
 
-## Setup
+- Fast autocomplete for exact Camdram people selection
+- Shortest-path mode for quick answers
+- All-path mode for digging through every route at chosen degree depth
+- Role filters for `cast`, `prod`, and `band`
+- Interactive graph with pan, zoom, highlight, reset, and PNG export
+- Share links with names preloaded
+- Live progress UI with depth, cache, show, and path counters
 
-No build step required. Static HTML/CSS/JS plus a Cloudflare Pages Function for CORS proxying.
+## Stack
 
-### Local development
+- Vanilla HTML, CSS, JavaScript
+- `vis-network` for graph rendering
+- Cloudflare Pages for hosting
+- Cloudflare Pages Function at `functions/api/[[path]].js` for Camdram CORS proxying and edge caching
 
-Use Wrangler to run locally (this enables the CORS proxy function):
+No build step. Static site plus lightweight serverless proxy.
+
+## Run locally
+
+Use Wrangler so `/api/*` proxy works:
 
 ```sh
 npx wrangler pages dev . --port 8788
 ```
 
-Then open http://localhost:8788.
+Open `http://localhost:8788`.
 
-> **Note:** A plain static server (`python3 -m http.server`) won't work because the Camdram API doesn't send CORS headers. The Cloudflare Pages Function at `functions/api/[[path]].js` proxies requests through `/api/*` and adds the required headers.
+Plain static server will not work here. Camdram API does not send browser-friendly CORS headers, so app depends on local Pages Function.
 
-### Deploy to Cloudflare Pages
+## Deploy
 
-1. Push this repo to GitHub
-2. In the Cloudflare dashboard, go to **Workers & Pages > Create > Pages**
-3. Connect your GitHub repo
-4. No build command needed; output directory: `/`
-5. Deploy — the `functions/` directory is automatically picked up
-
-Or use the Wrangler CLI:
+Cloudflare Pages picks this repo up without build config.
 
 ```sh
 npx wrangler pages deploy . --project-name=camdram-connected
 ```
 
-## Camdram API
+Or connect repo in Cloudflare dashboard and use `/` as output directory.
 
-The app uses these public Camdram API endpoints (no auth required for basic usage):
+## Search model
+
+1. User selects two exact people from Camdram autocomplete.
+2. App fetches roles, then expands outward through shared shows.
+3. Breadth-first search finds minimum-degree connections in shortest-path mode.
+4. Exhaustive mode keeps collecting all valid routes at selected depths.
+5. Results render as graph plus step-by-step connection detail.
+
+## Data source
+
+Public Camdram endpoints used by app:
 
 | Endpoint | Purpose |
-|---|---|
+| --- | --- |
 | `GET /people.json?q={query}` | Search people by name |
-| `GET /people/{slug}.json` | Get person details |
-| `GET /people/{slug}/roles.json` | Get all roles for a person |
-| `GET /shows/{slug}/roles.json` | Get all roles in a show |
+| `GET /people/{slug}/roles.json` | Load one person's credits |
+| `GET /shows/{slug}/roles.json` | Load one show's credits |
 
-Role objects include `type` field: `cast`, `prod` (crew/production), or `band`.
-
-## How it works
-
-1. User selects two people via autocomplete search
-2. BFS explores outward from person 1, fetching their shows and co-workers
-3. At each depth level, if person 2 is found among co-workers, the path is returned
-4. The path is rendered as an interactive graph (people = circles, shows = boxes)
-5. A details panel lists each connection step with show names and roles
+Role types supported: `cast`, `prod`, `band`.
