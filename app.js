@@ -662,65 +662,82 @@ async function findAllUnidirectional(slug1, slug2, selectedDepths, options = {})
 
     const allPaths = [];
     const seenPathKeys = new Set();
-    let queue = [{ personSlug: slug1, path: [slug1], edges: [], seenSlugs: new Set([slug1]) }];
+    const discoveredAt = new Map(); // slug -> depth
+    discoveredAt.set(slug1, 0);
+
+    let currentLevel = new Map();
+    currentLevel.set(slug1, [{ path: [slug1], edges: [], seenSlugs: new Set([slug1]) }]);
 
     let showsFetched = 0;
 
     for (let depth = 0; depth < maxDepth; depth++) {
-        const nextQueue = [];
+        const nextLevel = new Map();
+        const nextLevelPathKeys = new Set();
+        const slugsToExpand = Array.from(currentLevel.keys());
         let peopleExplored = 0;
-        const totalAtDepth = queue.length;
+        const totalAtDepth = slugsToExpand.length;
         const depthLabel = `Depth ${depth + 1}/${maxDepth}`;
         updateProgress(depthLabel, 0, totalAtDepth, showsFetched, allPaths.length);
 
         // Process people in parallel batches of 3
         const BATCH_SIZE = 3;
-        for (let i = 0; i < queue.length; i += BATCH_SIZE) {
-            const batch = queue.slice(i, i + BATCH_SIZE);
+        for (let i = 0; i < slugsToExpand.length; i += BATCH_SIZE) {
+            const batch = slugsToExpand.slice(i, i + BATCH_SIZE);
 
             const batchResults = await Promise.all(
-                batch.map(async (entry) => {
+                batch.map(async (personSlug) => {
                     const connectionsByCoworker = await expandPerson(
-                        entry.personSlug,
+                        personSlug,
                         roleTypes,
                         () => {
                             showsFetched++;
                             updateProgress(depthLabel, peopleExplored, totalAtDepth, showsFetched, allPaths.length);
                         }
                     );
-                    return { entry, connectionsByCoworker };
+                    return { personSlug, connectionsByCoworker };
                 })
             );
 
-            // Sequential merge for visited-set safety
-            for (const { entry, connectionsByCoworker } of batchResults) {
+            // Sequential merge per expanded slug. Keep all same-depth arrivals.
+            for (const { personSlug, connectionsByCoworker } of batchResults) {
+                const partialPaths = currentLevel.get(personSlug) || [];
+
                 for (const [coSlug, showConnsMap] of connectionsByCoworker) {
-                    const newEdge = buildEdge(entry.personSlug, coSlug, showConnsMap);
-                    const newEdges = [...entry.edges, newEdge];
+                    const newEdge = buildEdge(personSlug, coSlug, showConnsMap);
 
-                    if (pathRepeatsShow(newEdges)) continue;
+                    for (const partial of partialPaths) {
+                        if (partial.seenSlugs.has(coSlug)) continue;
 
-                    if (coSlug === slug2) {
+                        const newEdges = [...partial.edges, newEdge];
+                        if (pathRepeatsShow(newEdges)) continue;
+
                         const found = {
-                            path: [...entry.path, coSlug],
+                            path: [...partial.path, coSlug],
                             edges: newEdges,
+                            seenSlugs: new Set([...partial.seenSlugs, coSlug]),
                         };
-                        const degree = found.path.length - 1;
-                        const pathKey = found.path.join('>');
-                        if (isSelectedDegree(degree, selectedDepths) && !seenPathKeys.has(pathKey)) {
-                            seenPathKeys.add(pathKey);
-                            allPaths.push(found);
-                            const pathNames = found.path.map(s => peopleNames.get(s) || s).join(' → ');
-                            logFetch(`Found path: ${pathNames}`, 'found');
-                            if (onPathFound) onPathFound({ paths: [...allPaths], peopleNames });
+
+                        if (coSlug === slug2) {
+                            const degree = found.path.length - 1;
+                            const pathKey = found.path.join('>');
+                            if (isSelectedDegree(degree, selectedDepths) && !seenPathKeys.has(pathKey)) {
+                                seenPathKeys.add(pathKey);
+                                allPaths.push({ path: found.path, edges: found.edges });
+                                const pathNames = found.path.map(s => peopleNames.get(s) || s).join(' → ');
+                                logFetch(`Found path: ${pathNames}`, 'found');
+                                if (onPathFound) onPathFound({ paths: [...allPaths], peopleNames });
+                            }
+                            continue;
                         }
-                    } else if (!entry.seenSlugs.has(coSlug)) {
-                        nextQueue.push({
-                            personSlug: coSlug,
-                            path: [...entry.path, coSlug],
-                            edges: newEdges,
-                            seenSlugs: new Set([...entry.seenSlugs, coSlug]),
-                        });
+
+                        const nextDepth = depth + 1;
+                        const pathKey = found.path.join('>');
+                        if ((!discoveredAt.has(coSlug) || discoveredAt.get(coSlug) === nextDepth) && !nextLevelPathKeys.has(pathKey)) {
+                            discoveredAt.set(coSlug, nextDepth);
+                            nextLevelPathKeys.add(pathKey);
+                            if (!nextLevel.has(coSlug)) nextLevel.set(coSlug, []);
+                            nextLevel.get(coSlug).push(found);
+                        }
                     }
                 }
 
@@ -729,8 +746,8 @@ async function findAllUnidirectional(slug1, slug2, selectedDepths, options = {})
             }
         }
 
-        queue = nextQueue;
-        if (queue.length === 0) break;
+        currentLevel = nextLevel;
+        if (currentLevel.size === 0) break;
     }
 
     if (allPaths.length === 0) return null;
@@ -748,8 +765,8 @@ async function findShortestBidirectional(slug1, slug2, selectedDepths, options =
     let forwardFrontier = [slug1];
     let backwardFrontier = [slug2];
 
-    const forwardVisited = new Set([slug1]);
-    const backwardVisited = new Set([slug2]);
+    const forwardVisited = new Map([[slug1, -1]]);
+    const backwardVisited = new Map([[slug2, -1]]);
 
     // Path maps: slug -> [{path: [slugs...], edges: [edge...]}]
     const forwardPaths = new Map();
@@ -836,15 +853,16 @@ async function findShortestBidirectional(slug1, slug2, selectedDepths, options =
                         }
                     }
 
-                    // Add to frontier if not visited (don't add target to visited in either direction)
-                    if (!visited.has(coSlug)) {
-                        visited.add(coSlug);
-                        nextFrontier.push(coSlug);
-                        paths.set(coSlug, newPartials);
-                    } else if (paths.has(coSlug)) {
-                        // Already visited but we store additional paths
-                        // (only relevant for multiple shortest paths)
-                        // Skip — first visit captures the shortest
+                    // Keep all arrivals first discovered at this same BFS depth
+                    // so shortest-path mode can return multiple equal-length paths.
+                    const discoveryDepth = visited.get(coSlug);
+                    if (discoveryDepth === undefined || discoveryDepth === depth) {
+                        if (discoveryDepth === undefined) {
+                            visited.set(coSlug, depth);
+                            nextFrontier.push(coSlug);
+                            paths.set(coSlug, []);
+                        }
+                        paths.get(coSlug).push(...newPartials);
                     }
                 }
 
