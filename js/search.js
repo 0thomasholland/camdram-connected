@@ -1,10 +1,27 @@
 import { expandPerson, estimateFrontierCost } from './api.js';
 import { appState } from './state.js';
 
-function updateSearchProgress(options, depthLabel, current, total, showCount, pathCount, connectionCount, peopleCount) {
-    if (options.onProgress) {
-        options.onProgress(depthLabel, current, total, showCount, pathCount, connectionCount, peopleCount);
-    }
+function createSearchMetrics() {
+    return {
+        showsFetched: 0,
+        connectionsChecked: 0,
+        peopleExploredTotal: 0,
+    };
+}
+
+function createProgressReporter(options, metrics, getPathCount) {
+    return function reportProgress(depthLabel, current, total) {
+        if (!options.onProgress) return;
+        options.onProgress(
+            depthLabel,
+            current,
+            total,
+            metrics.showsFetched,
+            getPathCount(),
+            metrics.connectionsChecked,
+            metrics.peopleExploredTotal
+        );
+    };
 }
 
 function logPathFound(found, options) {
@@ -92,69 +109,100 @@ function pathRepeatsShow(edges) {
     return false;
 }
 
-async function findAllUnidirectional(slug1, slug2, selectedDepths, options = {}) {
-    const roleTypes = getActiveRoleTypes();
+function createPath(path, edges, seenSlugs = null) {
+    return { path, edges, seenSlugs };
+}
+
+function appendToUnidirectionalPath(partial, coSlug, edge) {
+    if (partial.seenSlugs.has(coSlug)) return null;
+
+    const edges = [...partial.edges, edge];
+    if (pathRepeatsShow(edges)) return null;
+
+    return createPath(
+        [...partial.path, coSlug],
+        edges,
+        new Set([...partial.seenSlugs, coSlug])
+    );
+}
+
+function appendToShortestPath(partial, coSlug, edge) {
+    return createPath([...partial.path, coSlug], [...partial.edges, edge]);
+}
+
+function recordFoundPath(found, foundPaths, seenPathKeys, selectedDepths, options) {
+    const degree = found.path.length - 1;
+    const pathKey = found.path.join('>');
+    if (!isSelectedDegree(degree, selectedDepths) || seenPathKeys.has(pathKey)) {
+        return false;
+    }
+
+    seenPathKeys.add(pathKey);
+    foundPaths.push({ path: found.path, edges: found.edges });
+    logPathFound({ path: found.path, paths: [...foundPaths] }, options);
+    return true;
+}
+
+async function expandBatch(batch, roleTypes, options, metrics, reportProgress, progressState) {
+    return Promise.all(
+        batch.map(async (personSlug) => {
+            const connectionsByCoworker = await expandPerson(personSlug, roleTypes, {
+                onLog: options.onLog,
+                onShowFetched() {
+                    metrics.showsFetched++;
+                    reportProgress(progressState.depthLabel, progressState.peopleExplored, progressState.totalAtDepth);
+                },
+            });
+            return { personSlug, connectionsByCoworker };
+        })
+    );
+}
+
+async function findAllUnidirectional(slug1, slug2, selectedDepths, roleTypes, options = {}) {
     const maxDepth = Math.max(...selectedDepths);
     const allPaths = [];
     const seenPathKeys = new Set();
     const discoveredAt = new Map([[slug1, 0]]);
-    let currentLevel = new Map([[slug1, [{ path: [slug1], edges: [], seenSlugs: new Set([slug1]) }]]]);
-    let showsFetched = 0;
-    let connectionsChecked = 0;
-    let peopleExploredTotal = 0;
+    const metrics = createSearchMetrics();
+    const reportProgress = createProgressReporter(options, metrics, () => allPaths.length);
+    let currentLevel = new Map([[slug1, [createPath([slug1], [], new Set([slug1]))]]]);
 
     for (let depth = 0; depth < maxDepth; depth++) {
         const nextLevel = new Map();
         const nextLevelPathKeys = new Set();
         const slugsToExpand = Array.from(currentLevel.keys());
-        let peopleExplored = 0;
-        const totalAtDepth = slugsToExpand.length;
-        const depthLabel = `Depth ${depth + 1}/${maxDepth}`;
-        updateSearchProgress(options, depthLabel, 0, totalAtDepth, showsFetched, allPaths.length, connectionsChecked, peopleExploredTotal);
+        const progressState = {
+            depthLabel: `Depth ${depth + 1}/${maxDepth}`,
+            peopleExplored: 0,
+            totalAtDepth: slugsToExpand.length,
+        };
+        reportProgress(progressState.depthLabel, 0, progressState.totalAtDepth);
 
         const batchSize = 3;
         for (let i = 0; i < slugsToExpand.length; i += batchSize) {
             const batch = slugsToExpand.slice(i, i + batchSize);
-            const batchResults = await Promise.all(
-                batch.map(async (personSlug) => {
-                    const connectionsByCoworker = await expandPerson(personSlug, roleTypes, {
-                        onLog: options.onLog,
-                        onShowFetched() {
-                            showsFetched++;
-                            updateSearchProgress(options, depthLabel, peopleExplored, totalAtDepth, showsFetched, allPaths.length, connectionsChecked, peopleExploredTotal);
-                        },
-                    });
-                    return { personSlug, connectionsByCoworker };
-                })
+            const batchResults = await expandBatch(
+                batch,
+                roleTypes,
+                options,
+                metrics,
+                reportProgress,
+                progressState
             );
 
             for (const { personSlug, connectionsByCoworker } of batchResults) {
                 const partialPaths = currentLevel.get(personSlug) || [];
 
                 for (const [coSlug, showConnsMap] of connectionsByCoworker) {
-                    connectionsChecked++;
+                    metrics.connectionsChecked++;
                     const newEdge = buildEdge(personSlug, coSlug, showConnsMap);
 
                     for (const partial of partialPaths) {
-                        if (partial.seenSlugs.has(coSlug)) continue;
-
-                        const newEdges = [...partial.edges, newEdge];
-                        if (pathRepeatsShow(newEdges)) continue;
-
-                        const found = {
-                            path: [...partial.path, coSlug],
-                            edges: newEdges,
-                            seenSlugs: new Set([...partial.seenSlugs, coSlug]),
-                        };
+                        const found = appendToUnidirectionalPath(partial, coSlug, newEdge);
+                        if (!found) continue;
 
                         if (coSlug === slug2) {
-                            const degree = found.path.length - 1;
-                            const pathKey = found.path.join('>');
-                            if (isSelectedDegree(degree, selectedDepths) && !seenPathKeys.has(pathKey)) {
-                                seenPathKeys.add(pathKey);
-                                allPaths.push({ path: found.path, edges: found.edges });
-                                logPathFound({ path: found.path, paths: [...allPaths] }, options);
-                            }
+                            recordFoundPath(found, allPaths, seenPathKeys, selectedDepths, options);
                             continue;
                         }
 
@@ -169,9 +217,9 @@ async function findAllUnidirectional(slug1, slug2, selectedDepths, options = {})
                     }
                 }
 
-                peopleExplored++;
-                peopleExploredTotal++;
-                updateSearchProgress(options, depthLabel, peopleExplored, totalAtDepth, showsFetched, allPaths.length, connectionsChecked, peopleExploredTotal);
+                progressState.peopleExplored++;
+                metrics.peopleExploredTotal++;
+                reportProgress(progressState.depthLabel, progressState.peopleExplored, progressState.totalAtDepth);
             }
         }
 
@@ -203,20 +251,18 @@ function combinePaths(forward, backward) {
     };
 }
 
-async function findShortestBidirectional(slug1, slug2, selectedDepths, options = {}) {
-    const roleTypes = getActiveRoleTypes();
+async function findShortestBidirectional(slug1, slug2, selectedDepths, roleTypes, options = {}) {
     const maxDepth = Math.max(...selectedDepths);
     let forwardFrontier = [slug1];
     let backwardFrontier = [slug2];
     const forwardVisited = new Map([[slug1, -1]]);
     const backwardVisited = new Map([[slug2, -1]]);
-    const forwardPaths = new Map([[slug1, [{ path: [slug1], edges: [] }]]]);
-    const backwardPaths = new Map([[slug2, [{ path: [slug2], edges: [] }]]]);
-    let showsFetched = 0;
-    let connectionsChecked = 0;
-    let peopleExploredTotal = 0;
+    const forwardPaths = new Map([[slug1, [createPath([slug1], [])]]]);
+    const backwardPaths = new Map([[slug2, [createPath([slug2], [])]]]);
+    const metrics = createSearchMetrics();
     const foundPaths = [];
     const seenPathKeys = new Set();
+    const reportProgress = createProgressReporter(options, metrics, () => foundPaths.length);
 
     for (let depth = 0; depth < maxDepth; depth++) {
         const forwardCost = estimateFrontierCost(forwardFrontier, roleTypes);
@@ -228,39 +274,33 @@ async function findShortestBidirectional(slug1, slug2, selectedDepths, options =
         const visited = expandForward ? forwardVisited : backwardVisited;
         const paths = expandForward ? forwardPaths : backwardPaths;
         const oppositePaths = expandForward ? backwardPaths : forwardPaths;
-        const direction = expandForward ? 'Forward' : 'Backward';
-        const depthLabel = `${direction} depth ${depth + 1}/${maxDepth}`;
-        const totalAtDepth = frontier.length;
-        let peopleExplored = 0;
-        updateSearchProgress(options, depthLabel, 0, totalAtDepth, showsFetched, foundPaths.length, connectionsChecked, peopleExploredTotal);
+        const progressState = {
+            depthLabel: `${expandForward ? 'Forward' : 'Backward'} depth ${depth + 1}/${maxDepth}`,
+            peopleExplored: 0,
+            totalAtDepth: frontier.length,
+        };
+        reportProgress(progressState.depthLabel, 0, progressState.totalAtDepth);
 
         const nextFrontier = [];
         const batchSize = 3;
         for (let i = 0; i < frontier.length; i += batchSize) {
             const batch = frontier.slice(i, i + batchSize);
-            const batchResults = await Promise.all(
-                batch.map(async (personSlug) => {
-                    const connectionsByCoworker = await expandPerson(personSlug, roleTypes, {
-                        onLog: options.onLog,
-                        onShowFetched() {
-                            showsFetched++;
-                            updateSearchProgress(options, depthLabel, peopleExplored, totalAtDepth, showsFetched, foundPaths.length, connectionsChecked, peopleExploredTotal);
-                        },
-                    });
-                    return { personSlug, connectionsByCoworker };
-                })
+            const batchResults = await expandBatch(
+                batch,
+                roleTypes,
+                options,
+                metrics,
+                reportProgress,
+                progressState
             );
 
             for (const { personSlug, connectionsByCoworker } of batchResults) {
                 const currentPathsForPerson = paths.get(personSlug) || [];
 
                 for (const [coSlug, showConnsMap] of connectionsByCoworker) {
-                    connectionsChecked++;
+                    metrics.connectionsChecked++;
                     const edge = buildEdge(personSlug, coSlug, showConnsMap);
-                    const newPartials = currentPathsForPerson.map((path) => ({
-                        path: [...path.path, coSlug],
-                        edges: [...path.edges, edge],
-                    }));
+                    const newPartials = currentPathsForPerson.map((path) => appendToShortestPath(path, coSlug, edge));
 
                     if (oppositePaths.has(coSlug)) {
                         for (const forwardPartial of newPartials) {
@@ -268,12 +308,7 @@ async function findShortestBidirectional(slug1, slug2, selectedDepths, options =
                                 const combined = expandForward
                                     ? combinePaths(forwardPartial, backwardPartial)
                                     : combinePaths(backwardPartial, forwardPartial);
-                                const degree = combined.path.length - 1;
-                                const pathKey = combined.path.join('>');
-                                if (!isSelectedDegree(degree, selectedDepths) || seenPathKeys.has(pathKey)) continue;
-                                seenPathKeys.add(pathKey);
-                                foundPaths.push(combined);
-                                logPathFound({ path: combined.path, paths: [...foundPaths] }, options);
+                                recordFoundPath(combined, foundPaths, seenPathKeys, selectedDepths, options);
                             }
                         }
                     }
@@ -289,9 +324,9 @@ async function findShortestBidirectional(slug1, slug2, selectedDepths, options =
                     }
                 }
 
-                peopleExplored++;
-                peopleExploredTotal++;
-                updateSearchProgress(options, depthLabel, peopleExplored, totalAtDepth, showsFetched, foundPaths.length, connectionsChecked, peopleExploredTotal);
+                progressState.peopleExplored++;
+                metrics.peopleExploredTotal++;
+                reportProgress(progressState.depthLabel, progressState.peopleExplored, progressState.totalAtDepth);
             }
         }
 
@@ -319,6 +354,6 @@ export async function findAllConnections(slug1, slug2, selectedDepths, options =
     }
 
     return isShortestOnlyMode()
-        ? findShortestBidirectional(slug1, slug2, selectedDepths, options)
-        : findAllUnidirectional(slug1, slug2, selectedDepths, options);
+        ? findShortestBidirectional(slug1, slug2, selectedDepths, roleTypes, options)
+        : findAllUnidirectional(slug1, slug2, selectedDepths, roleTypes, options);
 }
