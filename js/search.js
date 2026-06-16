@@ -1,9 +1,9 @@
 import { expandPerson, estimateFrontierCost } from './api.js';
 import { appState } from './state.js';
 
-function updateSearchProgress(options, depthLabel, current, total, showCount, pathCount) {
+function updateSearchProgress(options, depthLabel, current, total, showCount, pathCount, connectionCount, peopleCount) {
     if (options.onProgress) {
-        options.onProgress(depthLabel, current, total, showCount, pathCount);
+        options.onProgress(depthLabel, current, total, showCount, pathCount, connectionCount, peopleCount);
     }
 }
 
@@ -100,6 +100,8 @@ async function findAllUnidirectional(slug1, slug2, selectedDepths, options = {})
     const discoveredAt = new Map([[slug1, 0]]);
     let currentLevel = new Map([[slug1, [{ path: [slug1], edges: [], seenSlugs: new Set([slug1]) }]]]);
     let showsFetched = 0;
+    let connectionsChecked = 0;
+    let peopleExploredTotal = 0;
 
     for (let depth = 0; depth < maxDepth; depth++) {
         const nextLevel = new Map();
@@ -108,7 +110,7 @@ async function findAllUnidirectional(slug1, slug2, selectedDepths, options = {})
         let peopleExplored = 0;
         const totalAtDepth = slugsToExpand.length;
         const depthLabel = `Depth ${depth + 1}/${maxDepth}`;
-        updateSearchProgress(options, depthLabel, 0, totalAtDepth, showsFetched, allPaths.length);
+        updateSearchProgress(options, depthLabel, 0, totalAtDepth, showsFetched, allPaths.length, connectionsChecked, peopleExploredTotal);
 
         const batchSize = 3;
         for (let i = 0; i < slugsToExpand.length; i += batchSize) {
@@ -119,7 +121,7 @@ async function findAllUnidirectional(slug1, slug2, selectedDepths, options = {})
                         onLog: options.onLog,
                         onShowFetched() {
                             showsFetched++;
-                            updateSearchProgress(options, depthLabel, peopleExplored, totalAtDepth, showsFetched, allPaths.length);
+                            updateSearchProgress(options, depthLabel, peopleExplored, totalAtDepth, showsFetched, allPaths.length, connectionsChecked, peopleExploredTotal);
                         },
                     });
                     return { personSlug, connectionsByCoworker };
@@ -130,6 +132,7 @@ async function findAllUnidirectional(slug1, slug2, selectedDepths, options = {})
                 const partialPaths = currentLevel.get(personSlug) || [];
 
                 for (const [coSlug, showConnsMap] of connectionsByCoworker) {
+                    connectionsChecked++;
                     const newEdge = buildEdge(personSlug, coSlug, showConnsMap);
 
                     for (const partial of partialPaths) {
@@ -167,7 +170,8 @@ async function findAllUnidirectional(slug1, slug2, selectedDepths, options = {})
                 }
 
                 peopleExplored++;
-                updateSearchProgress(options, depthLabel, peopleExplored, totalAtDepth, showsFetched, allPaths.length);
+                peopleExploredTotal++;
+                updateSearchProgress(options, depthLabel, peopleExplored, totalAtDepth, showsFetched, allPaths.length, connectionsChecked, peopleExploredTotal);
             }
         }
 
@@ -209,6 +213,8 @@ async function findShortestBidirectional(slug1, slug2, selectedDepths, options =
     const forwardPaths = new Map([[slug1, [{ path: [slug1], edges: [] }]]]);
     const backwardPaths = new Map([[slug2, [{ path: [slug2], edges: [] }]]]);
     let showsFetched = 0;
+    let connectionsChecked = 0;
+    let peopleExploredTotal = 0;
     const foundPaths = [];
     const seenPathKeys = new Set();
 
@@ -226,7 +232,7 @@ async function findShortestBidirectional(slug1, slug2, selectedDepths, options =
         const depthLabel = `${direction} depth ${depth + 1}/${maxDepth}`;
         const totalAtDepth = frontier.length;
         let peopleExplored = 0;
-        updateSearchProgress(options, depthLabel, 0, totalAtDepth, showsFetched, foundPaths.length);
+        updateSearchProgress(options, depthLabel, 0, totalAtDepth, showsFetched, foundPaths.length, connectionsChecked, peopleExploredTotal);
 
         const nextFrontier = [];
         const batchSize = 3;
@@ -238,7 +244,7 @@ async function findShortestBidirectional(slug1, slug2, selectedDepths, options =
                         onLog: options.onLog,
                         onShowFetched() {
                             showsFetched++;
-                            updateSearchProgress(options, depthLabel, peopleExplored, totalAtDepth, showsFetched, foundPaths.length);
+                            updateSearchProgress(options, depthLabel, peopleExplored, totalAtDepth, showsFetched, foundPaths.length, connectionsChecked, peopleExploredTotal);
                         },
                     });
                     return { personSlug, connectionsByCoworker };
@@ -249,6 +255,7 @@ async function findShortestBidirectional(slug1, slug2, selectedDepths, options =
                 const currentPathsForPerson = paths.get(personSlug) || [];
 
                 for (const [coSlug, showConnsMap] of connectionsByCoworker) {
+                    connectionsChecked++;
                     const edge = buildEdge(personSlug, coSlug, showConnsMap);
                     const newPartials = currentPathsForPerson.map((path) => ({
                         path: [...path.path, coSlug],
@@ -283,7 +290,8 @@ async function findShortestBidirectional(slug1, slug2, selectedDepths, options =
                 }
 
                 peopleExplored++;
-                updateSearchProgress(options, depthLabel, peopleExplored, totalAtDepth, showsFetched, foundPaths.length);
+                peopleExploredTotal++;
+                updateSearchProgress(options, depthLabel, peopleExplored, totalAtDepth, showsFetched, foundPaths.length, connectionsChecked, peopleExploredTotal);
             }
         }
 

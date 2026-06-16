@@ -17,6 +17,7 @@ Find shortest route between any two people in Cambridge theatre.
 - Interactive graph with pan, zoom, highlight, reset, and PNG export
 - Share links with names preloaded
 - Live progress UI with depth, cache, show, and path counters
+- Browser `localStorage` cache for Camdram API responses, so repeat searches start warmer
 
 ## Stack
 

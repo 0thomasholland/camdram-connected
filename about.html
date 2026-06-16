@@ -12,19 +12,43 @@
 </head>
 <body>
     <div id="app" class="about-page">
-        <header>
+        <header class="hero-header about-hero-header">
+            <div class="hero-copy">
+                <h1><span class="about-title-prefix">About </span><span class="about-title-brand">Camdram Connected</span></h1>
+                <p class="subtitle">How the site works, what it is built with, and why some searches take longer than others.</p>
+            </div>
             <nav class="site-nav" aria-label="Primary">
                 <a class="site-nav-link" href="/">Search</a>
                 <a class="site-nav-link active" href="/about.html" aria-current="page">About</a>
             </nav>
-            <h1>About Camdram Connected</h1>
-            <p class="subtitle">How site works, what it is built with, and why some searches take longer than others.</p>
         </header>
 
         <main class="about-layout">
+            <section class="about-card about-analytics-callout" aria-labelledby="page-views-title">
+                <div>
+                    <p class="about-callout-label">Live analytics</p>
+                    <h2 id="page-views-title">Site page views</h2>
+                    <p>Traffic snapshot across Camdram Connected.</p>
+                </div>
+                <div class="about-callout-stats" aria-live="polite">
+                    <div class="about-callout-stat about-callout-stat-primary">
+                        <span class="about-callout-value is-loading" id="page-views-total">Loading...</span>
+                        <span class="about-callout-caption">total views</span>
+                    </div>
+                    <div class="about-callout-stat">
+                        <span class="about-callout-value is-loading" id="page-views-month">Loading...</span>
+                        <span class="about-callout-caption">last month</span>
+                    </div>
+                    <div class="about-callout-stat">
+                        <span class="about-callout-value is-loading" id="page-views-week">Loading...</span>
+                        <span class="about-callout-caption">last week</span>
+                    </div>
+                </div>
+            </section>
+
             <section class="about-card about-intro">
                 <h2>What It Does</h2>
-                <p>Camdram Connected explores Camdram credits to find links between two people in Cambridge theatre. Each connection is built from shared shows and roles, then displayed as both graph and step-by-step explanation.</p>
+                <p>Camdram Connected explores Camdram credits to find links between two people in Cambridge theatre. Each connection is built from shared shows and roles, then displayed as both a graph and a step-by-step explanation.</p>
             </section>
 
             <section class="about-card">
@@ -38,17 +62,17 @@
                     <article class="tech-item">
                         <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-diagram-project"></i></div>
                         <h3>vis-network</h3>
-                        <p>Draws interactive people-and-show graph with pan, zoom, and node highlighting.</p>
+                        <p>Draws an interactive people-and-show graph with pan, zoom, and node highlighting.</p>
                     </article>
                     <article class="tech-item">
                         <div class="about-item-icon" aria-hidden="true"><i class="fa-brands fa-cloudflare"></i></div>
                         <h3>Cloudflare Pages</h3>
-                        <p>Hosts site as static assets with no build step.</p>
+                        <p>Hosts the site as static assets with no build step.</p>
                     </article>
                     <article class="tech-item">
                         <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-shield-halved"></i></div>
                         <h3>Pages Function Proxy</h3>
-                        <p>Handles `/api/*` requests, adds CORS headers, and caches Camdram responses at edge.</p>
+                        <p>Handles `/api/*` requests, adds CORS headers, and caches Camdram responses at the edge.</p>
                     </article>
                     <article class="tech-item">
                         <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-masks-theater"></i></div>
@@ -69,27 +93,27 @@
                     <article class="algorithm-item">
                         <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-gauge-high"></i></div>
                         <h3>Rate Limiting</h3>
-                        <p>Inserts small delay between outbound requests. Search often needs many person-role and show-role lookups in sequence, so paced requests reduce load spikes and keep behaviour predictable.</p>
+                        <p>Inserts a small delay between outbound requests. Search often needs many person-role and show-role lookups in sequence, so paced requests reduce load spikes and keep behaviour predictable.</p>
                     </article>
                     <article class="algorithm-item">
                         <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-route"></i></div>
                         <h3>Breadth-First Search</h3>
-                        <p>Treats graph as person to show to person hops. Shortest-path mode explores layer by layer, so first successful route found is also minimum degree connection.</p>
+                        <p>Treats graph as person-to-show-to-person hops. Shortest-path mode explores layer by layer, so the first successful route found is also the minimum-degree connection.</p>
                     </article>
                     <article class="algorithm-item">
                         <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-arrows-split-up-and-left"></i></div>
                         <h3>All-Path Search</h3>
-                        <p>Continues collecting routes at same depth instead of stopping at first hit. That reveals multiple valid explanations, but branch count can grow quickly for well-connected people.</p>
+                        <p>Continues collecting routes at the same depth instead of stopping at the first hit. That reveals multiple valid explanations, but branch count can grow quickly for well-connected people.</p>
                     </article>
                     <article class="algorithm-item">
                         <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-binoculars"></i></div>
                         <h3>Lazy Graph Discovery</h3>
-                        <p>Fetches people and show data only when frontier reaches them. App never tries to preload whole theatre network, which keeps initial searches practical.</p>
+                        <p>Fetches people and show data only when the frontier reaches them. The app never tries to preload the whole theatre network, which keeps initial searches practical.</p>
                     </article>
                     <article class="algorithm-item">
                         <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-database"></i></div>
                         <h3>Caching</h3>
-                        <p>Stores fetched people, role lists, and show casts in memory for current session. Repeated searches can reuse known data instead of hitting API again.</p>
+                        <p>Stores fetched people, role lists, and show casts in memory for the current session. Repeated searches can reuse known data instead of hitting the API again.</p>
                     </article>
                     <article class="algorithm-item">
                         <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-repeat"></i></div>
@@ -99,28 +123,14 @@
                     <article class="algorithm-item">
                         <div class="about-item-icon" aria-hidden="true"><i class="fa-solid fa-ruler-combined"></i></div>
                         <h3>Depth Limits</h3>
-                        <p>Caps how far search can expand. Quick mode prunes aggressively for responsiveness, while deeper modes spend more requests and processing to uncover longer routes.</p>
+                        <p>Caps how far the search can expand. Quick mode prunes aggressively for responsiveness, while deeper modes spend more requests and processing to uncover longer routes.</p>
                     </article>
                 </div>
             </section>
 
             <section class="about-card">
                 <h2>Why Search Time Varies</h2>
-                <p>Some people have worked on many productions, which creates much larger search branches. Quick mode stops earlier. Deeper and exhaustive modes explore more graph, so they can reveal more paths but require more API requests and processing.</p>
-            </section>
-
-            <section class="about-card">
-                <h2>Live Analytics</h2>
-                <p>GoatCounter dashboard, embedded directly into this page with minimal UI chrome.</p>
-                <div class="analytics-frame-wrap">
-                    <iframe
-                        class="analytics-frame"
-                        src="https://camdramconnected.goatcounter.com?hideui=1"
-                        title="Camdram Connected GoatCounter analytics"
-                        loading="lazy"
-                        referrerpolicy="strict-origin-when-cross-origin">
-                    </iframe>
-                </div>
+                <p>Some people have worked on many productions, which creates much larger search branches. Quick mode stops earlier. Deeper and exhaustive modes explore more of the graph, so they can reveal more paths but require more API requests and processing.</p>
             </section>
         </main>
 
@@ -130,5 +140,76 @@
             <a href="https://github.com/0thomasholland/camdram-connected" target="_blank" rel="noopener noreferrer">View on GitHub</a>
         </footer>
     </div>
+
+    <script>
+        function fetchCount(url) {
+            return fetch(url, {
+                cache: 'no-store',
+                headers: {
+                    'Accept': 'application/json',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
+                }
+            })
+                .then(function(response) {
+                    if (!response.ok) {
+                        throw new Error('Could not load page view count')
+                    }
+                    return response.json()
+                })
+        }
+
+        function parseCount(value) {
+            return Number(String(value || '0').replace(/,/g, '')) || 0
+        }
+
+        function formatCount(value) {
+            return value.toLocaleString('en-GB')
+        }
+
+        function setCount(elementId, value) {
+            var element = document.getElementById(elementId)
+            element.textContent = value
+            element.classList.remove('is-loading')
+        }
+
+        function loadCount(query) {
+            var cacheBust = 'cacheBust=' + Date.now()
+            var fullQuery = query ? query + '&' + cacheBust : '?' + cacheBust
+            var urls = [
+                '/stats/TOTAL.json' + fullQuery,
+                'https://camdramconnected.goatcounter.com/counter/TOTAL.json' + fullQuery
+            ]
+
+            return fetchCount(urls[0])
+                .catch(function() {
+                    return fetchCount(urls[1])
+                })
+                .then(function(data) {
+                    return parseCount(data.count)
+                })
+        }
+
+        Promise.all([
+            loadCount(''),
+            loadCount('?start=month'),
+            loadCount('?start=week')
+        ]).then(function(counts) {
+            var total = counts[0]
+            var month = counts[1]
+            var week = counts[2]
+            var safeTotal = Math.max(total, month, week)
+
+            setCount('page-views-total', formatCount(safeTotal))
+            setCount('page-views-month', formatCount(month))
+            setCount('page-views-week', formatCount(week))
+        }).catch(function() {
+            setCount('page-views-total', 'Unavailable')
+            setCount('page-views-month', 'Unavailable')
+            setCount('page-views-week', 'Unavailable')
+        })
+    </script>
+    <script data-goatcounter="https://camdramconnected.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
 </body>
 </html>

@@ -13,42 +13,48 @@
 </head>
 <body>
     <div id="app">
-        <header>
+        <header class="hero-header">
+            <div class="hero-copy">
+                <h1>Camdram Connected</h1>
+                <p class="subtitle">Find connection between any two people in Cambridge theatre</p>
+            </div>
             <nav class="site-nav" aria-label="Primary">
                 <a class="site-nav-link active" href="/">Search</a>
                 <a class="site-nav-link" href="/about.html">About</a>
             </nav>
-            <h1>Camdram Connected</h1>
-            <p class="subtitle">Find the connection between any two people in Cambridge theatre</p>
         </header>
 
         <div class="search-panel">
-            <div class="input-group">
-                <label for="person1">Start person</label>
-                <div class="autocomplete-wrapper">
-                    <input type="text" id="person1" placeholder="Start typing a name..." autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="person1-list">
-                    <div class="autocomplete-list" id="person1-list" role="listbox"></div>
+            <div class="search-people-row">
+                <div class="input-group">
+                    <label for="person1">Start person</label>
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="person1" placeholder="Start typing a name..." autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="person1-list">
+                        <div class="autocomplete-list" id="person1-list" role="listbox"></div>
+                    </div>
+                    <div class="input-meta">
+                        <span class="selected-person hidden" id="person1-selected"></span>
+                        <span class="input-hint">Pick exact person from dropdown.</span>
+                    </div>
+                    <input type="hidden" id="person1-slug">
                 </div>
-                <div class="input-meta">
-                    <span class="selected-person hidden" id="person1-selected"></span>
-                    <span class="input-hint">Pick exact person from dropdown.</span>
+
+                <div class="search-panel-actions">
+                    <button id="find-btn" disabled>Find Connection</button>
                 </div>
-                <input type="hidden" id="person1-slug">
-            </div>
-            <div class="swap-control">
-                <button id="swap-btn" type="button" title="Swap people" aria-label="Swap people">Swap</button>
-            </div>
-            <div class="input-group">
-                <label for="person2">Target person</label>
-                <div class="autocomplete-wrapper">
-                    <input type="text" id="person2" placeholder="Start typing a name..." autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="person2-list">
-                    <div class="autocomplete-list" id="person2-list" role="listbox"></div>
+
+                <div class="input-group">
+                    <label for="person2">Target person</label>
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="person2" placeholder="Start typing a name..." autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="person2-list">
+                        <div class="autocomplete-list" id="person2-list" role="listbox"></div>
+                    </div>
+                    <div class="input-meta">
+                        <span class="selected-person hidden" id="person2-selected"></span>
+                        <span class="input-hint">Pick exact person from dropdown.</span>
+                    </div>
+                    <input type="hidden" id="person2-slug">
                 </div>
-                <div class="input-meta">
-                    <span class="selected-person hidden" id="person2-selected"></span>
-                    <span class="input-hint">Pick exact person from dropdown.</span>
-                </div>
-                <input type="hidden" id="person2-slug">
             </div>
             <div class="filters">
                 <fieldset>
@@ -59,8 +65,8 @@
                 </fieldset>
                 <fieldset class="mode-control">
                     <legend>Search mode</legend>
-                    <label><input type="radio" name="search-mode" value="shortest" checked> Shortest paths only</label>
-                    <label><input type="radio" name="search-mode" value="all"> All paths in selected degrees</label>
+                    <label><input type="radio" name="search-mode" value="shortest"> Shortest paths only</label>
+                    <label><input type="radio" name="search-mode" value="all" checked> All paths in selected degrees</label>
                 </fieldset>
                 <fieldset class="depth-control">
                     <legend>Degrees to show</legend>
@@ -71,26 +77,41 @@
                 </fieldset>
             </div>
             <div class="search-guidance">Choose exact degrees to search and show. Higher degrees may take longer.</div>
-            <button id="find-btn" disabled>Find Connection</button>
         </div>
 
         <div id="status" class="status hidden"></div>
 
-        <div id="progress-container" class="progress-container hidden">
-            <div class="progress-header">
-                <span id="progress-depth"></span>
-                <span class="progress-counters">
-                    <span id="progress-shows">0 shows</span>
-                    <span id="progress-cache">0 cached</span>
-                    <span id="progress-paths">0 paths</span>
-                </span>
+        <div class="search-feedback">
+            <div id="progress-container" class="progress-container hidden">
+                <div class="progress-header">
+                    <div class="progress-summary-block">
+                        <div id="progress-depth" class="progress-depth"></div>
+                        <div id="progress-summary" class="progress-summary">Preparing search...</div>
+                    </div>
+                    <div class="progress-counters">
+                        <span id="progress-shows" class="progress-counter">0 shows</span>
+                        <span id="progress-connections" class="progress-counter">0 connections</span>
+                        <span id="progress-cache" class="progress-counter">0 cached</span>
+                        <span id="progress-paths" class="progress-counter">0 paths</span>
+                    </div>
+                </div>
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" id="progress-bar"></div>
+                </div>
+                <button id="progress-toggle" type="button" class="progress-toggle" aria-expanded="false">Show technical progress</button>
+                <div class="progress-log hidden" id="progress-log"></div>
             </div>
-            <div class="progress-summary" id="progress-summary">Preparing search...</div>
-            <div class="progress-bar-track">
-                <div class="progress-bar-fill" id="progress-bar"></div>
+
+            <div id="timing-callout" class="timing-callout hidden">
+                <div class="timing-callout-header">
+                    <div>
+                        <div class="timing-callout-title">Search timing</div>
+                        <div id="timing-total" class="timing-callout-total">Total: 0.0s</div>
+                    </div>
+                    <div id="timing-status" class="timing-callout-status">Waiting for search...</div>
+                </div>
+                <div id="timing-breakdown" class="timing-breakdown"></div>
             </div>
-            <button id="progress-toggle" type="button" class="progress-toggle" aria-expanded="false">Show technical progress</button>
-            <div class="progress-log hidden" id="progress-log"></div>
         </div>
 
         <div id="results" class="hidden">
@@ -105,7 +126,20 @@
             </div>
             <div class="results-body">
                 <div id="graph-panel">
-                    <div id="graph-container"></div>
+                    <div class="graph-frame">
+                        <div id="graph-help" class="graph-help hidden" role="note">
+                            <button id="graph-help-close" class="graph-help-close" type="button" aria-label="Dismiss graph help">&times;</button>
+                            <div class="graph-help-text">Click a node once to single out its route. Click same node again to jump to its details. Click empty space to clear, and hover links to see shared shows.</div>
+                        </div>
+                        <div id="graph-container"></div>
+                        <div class="graph-brand-mark" aria-hidden="true">
+                            <img src="/assets/icons/camdram-connected.svg" alt="" class="graph-brand-logo">
+                            <div class="graph-brand-copy">
+                                <div class="graph-brand-title">Camdram Connected</div>
+                                <div class="graph-brand-site">camdramconnected.net</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div id="details-panel">
                     <h3>Connection Details</h3>

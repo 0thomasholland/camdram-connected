@@ -8,6 +8,139 @@ import {
 } from './constants.js';
 import { appState } from './state.js';
 
+const STORAGE_PREFIX = 'camdram-connected:api-cache:';
+const STORAGE_INDEX_KEY = `${STORAGE_PREFIX}index`;
+const STORAGE_VERSION = 1;
+const STORAGE_TTL_MS = 24 * 60 * 60 * 1000;
+const STORAGE_MAX_ENTRIES = 200;
+
+function canUseLocalStorage() {
+    try {
+        return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+    } catch {
+        return false;
+    }
+}
+
+function getStorageKey(url) {
+    return `${STORAGE_PREFIX}${url}`;
+}
+
+function readStorageIndex() {
+    if (!canUseLocalStorage()) return [];
+
+    try {
+        const raw = window.localStorage.getItem(STORAGE_INDEX_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function writeStorageIndex(index) {
+    if (!canUseLocalStorage()) return;
+    window.localStorage.setItem(STORAGE_INDEX_KEY, JSON.stringify(index));
+}
+
+function removePersistentEntry(key, index = readStorageIndex()) {
+    if (!canUseLocalStorage()) return index;
+
+    window.localStorage.removeItem(key);
+    const nextIndex = index.filter((entryKey) => entryKey !== key);
+    writeStorageIndex(nextIndex);
+    return nextIndex;
+}
+
+function touchPersistentEntry(key, index = readStorageIndex()) {
+    const nextIndex = index.filter((entryKey) => entryKey !== key);
+    nextIndex.push(key);
+    writeStorageIndex(nextIndex);
+    return nextIndex;
+}
+
+function prunePersistentCache(index = readStorageIndex()) {
+    if (!canUseLocalStorage()) return [];
+
+    let nextIndex = [...index];
+    const cutoff = Date.now() - STORAGE_TTL_MS;
+    for (const key of index) {
+        try {
+            const raw = window.localStorage.getItem(key);
+            if (!raw) {
+                nextIndex = nextIndex.filter((entryKey) => entryKey !== key);
+                continue;
+            }
+
+            const entry = JSON.parse(raw);
+            if (entry.version !== STORAGE_VERSION || entry.savedAt < cutoff) {
+                nextIndex = removePersistentEntry(key, nextIndex);
+            }
+        } catch {
+            nextIndex = removePersistentEntry(key, nextIndex);
+        }
+    }
+
+    while (nextIndex.length > STORAGE_MAX_ENTRIES) {
+        nextIndex = removePersistentEntry(nextIndex[0], nextIndex);
+    }
+
+    return nextIndex;
+}
+
+function readPersistentResponse(url) {
+    if (!canUseLocalStorage()) return { hit: false };
+
+    const key = getStorageKey(url);
+    try {
+        const raw = window.localStorage.getItem(key);
+        if (!raw) return { hit: false };
+
+        const entry = JSON.parse(raw);
+        if (entry.version !== STORAGE_VERSION || Date.now() - entry.savedAt > STORAGE_TTL_MS) {
+            removePersistentEntry(key);
+            return { hit: false };
+        }
+
+        touchPersistentEntry(key);
+        return { hit: true, data: entry.data };
+    } catch {
+        removePersistentEntry(key);
+        return { hit: false };
+    }
+}
+
+function writePersistentResponse(url, data) {
+    if (!canUseLocalStorage()) return;
+
+    const key = getStorageKey(url);
+    const payload = JSON.stringify({
+        version: STORAGE_VERSION,
+        savedAt: Date.now(),
+        data,
+    });
+
+    let index = prunePersistentCache();
+    try {
+        window.localStorage.setItem(key, payload);
+        touchPersistentEntry(key, index);
+        return;
+    } catch {
+        // Local storage quota small. Evict oldest entries until write fits.
+    }
+
+    while (index.length > 0) {
+        index = removePersistentEntry(index[0], index);
+        try {
+            window.localStorage.setItem(key, payload);
+            touchPersistentEntry(key, index);
+            return;
+        } catch {
+            // Keep evicting until write succeeds or cache is empty.
+        }
+    }
+}
+
 class FetchPool {
     constructor() {
         this._inFlight = 0;
@@ -48,6 +181,12 @@ class FetchPool {
     }
 
     async _fetchWithRetry(url) {
+        const cached = readPersistentResponse(url);
+        if (cached.hit) {
+            appState.cacheHits++;
+            return cached.data;
+        }
+
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             const resp = await fetch(url);
             if (resp.status === 429 && attempt < MAX_RETRIES) {
@@ -57,11 +196,16 @@ class FetchPool {
                 continue;
             }
             if (!resp.ok) {
-                if (resp.status === 404) return null;
+                if (resp.status === 404) {
+                    writePersistentResponse(url, null);
+                    return null;
+                }
                 throw new Error(`API error ${resp.status} for ${url}`);
             }
             this._minGapMs = Math.max(MIN_GAP_MS, this._minGapMs - 5);
-            return resp.json();
+            const data = await resp.json();
+            writePersistentResponse(url, data);
+            return data;
         }
     }
 

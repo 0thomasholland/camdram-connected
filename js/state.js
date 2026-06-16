@@ -9,9 +9,12 @@ export const appState = {
     cacheHits: 0,
     currentSearchToken: 0,
     currentHighlightedPath: null,
+    lastClickedGraphNodeId: null,
     graphState: null,
     graphDefaultView: null,
     detailFocusTimer: null,
+    searchTiming: null,
+    timingTicker: null,
 };
 
 export function setDomRefs(dom) {

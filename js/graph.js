@@ -40,6 +40,8 @@ export function renderGraph(result, { preserveView = false } = {}) {
     const maxEdgeWidth = 10;
     const startSlug = paths[0].path[0];
     const endSlug = paths[0].path[paths[0].path.length - 1];
+    const uniqueNodeCount = new Set(paths.flatMap(({ path }) => path)).size;
+    const endpointOffset = Math.min(400, 220 + Math.max(0, uniqueNodeCount - 2) * 12);
     const nodeData = [];
     const edgeData = [];
     const nodeIds = new Set();
@@ -51,6 +53,7 @@ export function renderGraph(result, { preserveView = false } = {}) {
     const edgeShowCounts = new Map();
 
     appState.currentHighlightedPath = null;
+    appState.lastClickedGraphNodeId = null;
     appState.graphDefaultView = null;
 
     for (const [pathIndex, { path, edges }] of paths.entries()) {
@@ -73,7 +76,7 @@ export function renderGraph(result, { preserveView = false } = {}) {
                 label: name,
                 shape: 'dot',
                 size: isEndpoint ? 25 : 18,
-                x: slug === startSlug ? -220 : (slug === endSlug ? 220 : undefined),
+                x: slug === startSlug ? -endpointOffset : (slug === endSlug ? endpointOffset : undefined),
                 y: isEndpoint ? 0 : undefined,
                 fixed: isEndpoint ? { x: true, y: true } : false,
                 color: nodeColor,
@@ -139,10 +142,10 @@ export function renderGraph(result, { preserveView = false } = {}) {
         physics: {
             solver: 'forceAtlas2Based',
             forceAtlas2Based: {
-                gravitationalConstant: -70,
-                centralGravity: 0.005,
-                springLength: 160,
-                springConstant: 0.06,
+                gravitationalConstant: -95,
+                centralGravity: 0.002,
+                springLength: 180,
+                springConstant: 0.04,
             },
             stabilization: { iterations: 150 },
         },
@@ -294,8 +297,15 @@ function handleGraphClick(params) {
     if (nodeId) {
         const pathIndex = getPrimaryPathIndex(appState.graphState.nodePathMap.get(nodeId));
         if (pathIndex === null) return;
+
+        const shouldJumpToDetails = appState.lastClickedGraphNodeId === nodeId
+            && appState.currentHighlightedPath === pathIndex;
+
         setHighlightedPath(pathIndex);
-        focusPathInDetails(pathIndex);
+        if (shouldJumpToDetails) {
+            focusPathInDetails(pathIndex);
+        }
+        appState.lastClickedGraphNodeId = nodeId;
         return;
     }
 
@@ -305,10 +315,12 @@ function handleGraphClick(params) {
         if (pathIndex === null) return;
         setHighlightedPath(pathIndex);
         focusPathInDetails(pathIndex, edgeId);
+        appState.lastClickedGraphNodeId = null;
         return;
     }
 
     setHighlightedPath(null);
+    appState.lastClickedGraphNodeId = null;
 }
 
 export function resetGraphView() {
@@ -383,8 +395,8 @@ function renderShowList(result) {
 
         for (const link of show.links) {
             html += '<div class="show-list-link">';
-            html += `<div class="connection-link">${escapeHtml(link.fromName)} &rarr; ${escapeHtml(link.toName)}</div>`;
-            html += `<div class="roles">${escapeHtml(link.fromName)}: ${escapeHtml(link.fromRole)} | ${escapeHtml(link.toName)}: ${escapeHtml(link.toRole)}</div>`;
+            html += `<div class="connection-link"><strong>${escapeHtml(link.fromName)}</strong> &rarr; <strong>${escapeHtml(link.toName)}</strong></div>`;
+            html += `<div class="roles"><strong>${escapeHtml(link.fromName)}</strong>: ${escapeHtml(link.fromRole)} | <strong>${escapeHtml(link.toName)}</strong>: ${escapeHtml(link.toRole)}</div>`;
             html += '</div>';
         }
 
@@ -436,7 +448,7 @@ export function renderDetails(result) {
                 if (edge) {
                     const edgeId = `person:${edge.from}->person:${edge.to}`;
                     html += `<div class="connection-step" data-edge-id="${edgeId}" data-person-slugs="${fromSlug} ${toSlug}">`;
-                    html += `<div class="connection-link">${escapeHtml(fromName)} &rarr; ${escapeHtml(toName)}</div>`;
+                    html += `<div class="connection-link"><strong>${escapeHtml(fromName)}</strong> &rarr; <strong>${escapeHtml(toName)}</strong></div>`;
                     for (const show of edge.shows) {
                         const fromRole = edge.from === fromSlug ? show.fromRole : show.toRole;
                         const toRole = edge.from === fromSlug ? show.toRole : show.fromRole;
@@ -444,7 +456,7 @@ export function renderDetails(result) {
                         html += `<summary class="show-name">${escapeHtml(show.showName)}</summary>`;
                         html += '<div class="show-meta">';
                         html += `<div class="show-link"><a href="${CAMDRAM_SITE_BASE}/shows/${show.showSlug}" target="_blank" rel="noopener noreferrer">Open show page</a></div>`;
-                        html += `<div class="roles">${escapeHtml(fromName)}: ${escapeHtml(fromRole)} | ${escapeHtml(toName)}: ${escapeHtml(toRole)}</div>`;
+                        html += `<div class="roles"><strong>${escapeHtml(fromName)}</strong>: ${escapeHtml(fromRole)} | <strong>${escapeHtml(toName)}</strong>: ${escapeHtml(toRole)}</div>`;
                         html += '</div>';
                         html += '</details>';
                     }
@@ -496,10 +508,11 @@ export function renderResultSummary(result, interim = false) {
 }
 
 export function renderInterimResults(result) {
-    const { resultsEl, degreesBadge, graphPanel } = appState.dom;
+    const { resultsEl, degreesBadge, graphPanel, graphHelp } = appState.dom;
     resultsEl.classList.remove('hidden');
     degreesBadge.textContent = 'Path found';
     graphPanel.classList.remove('hidden');
+    graphHelp.classList.remove('hidden');
     renderResultSummary(result, true);
     renderGraph(result, { preserveView: Boolean(appState.network) });
     renderDetails(result);

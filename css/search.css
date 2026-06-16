@@ -3,10 +3,27 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 1.5rem;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    gap: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
     box-shadow: 0 4px 15px rgba(58, 57, 58, 0.05);
+}
+
+.search-people-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    align-items: start;
+}
+
+.search-people-row > .input-group:first-child {
+    grid-column: 1;
+    grid-row: 1;
+}
+
+.search-people-row > .input-group:last-child {
+    grid-column: 2;
+    grid-row: 1;
 }
 
 .input-group {
@@ -50,29 +67,15 @@
     font-weight: 600;
 }
 
-.swap-control {
+.search-panel-actions {
     display: flex;
-    align-items: center;
+    flex-direction: column;
     justify-content: center;
-}
-
-#swap-btn {
-    padding: 0.6rem 0.9rem;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--surface);
-    color: var(--text);
-    font-size: 0.84rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.15s;
-}
-
-#swap-btn:hover,
-#swap-btn:focus-visible {
-    border-color: var(--accent);
-    color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-glow);
+    gap: 0.7rem;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: min(18rem, 100%);
+    justify-self: center;
 }
 
 input[type="text"] {
@@ -147,11 +150,10 @@ input[type="text"].selected {
 }
 
 .filters {
-    grid-column: 1 / -1;
-    display: flex;
-    gap: 2rem;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
     align-items: start;
-    flex-wrap: wrap;
 }
 
 fieldset {
@@ -159,8 +161,9 @@ fieldset {
     border-radius: var(--radius);
     padding: 0.5rem 0.8rem;
     display: flex;
-    gap: 1rem;
+    gap: 0.8rem;
     flex-wrap: wrap;
+    min-width: 0;
 }
 
 fieldset legend {
@@ -192,15 +195,14 @@ fieldset label {
 }
 
 .search-guidance {
-    grid-column: 1 / -1;
     margin-top: -0.35rem;
     color: var(--text-muted);
     font-size: 0.82rem;
 }
 
 #find-btn {
-    grid-column: 1 / -1;
-    padding: 0.7rem;
+    width: 100%;
+    padding: 0.85rem 0.7rem;
     background: var(--accent);
     color: #ffffff;
     border: none;
@@ -256,16 +258,56 @@ fieldset label {
 }
 
 @media (max-width: 640px) {
-    .search-panel {
+    .search-people-row,
+    .filters {
         grid-template-columns: 1fr;
     }
 
-    .swap-control {
-        justify-content: flex-start;
+    .search-people-row > .input-group:first-child,
+    .search-people-row > .input-group:last-child {
+        grid-column: auto;
+        grid-row: auto;
+    }
+
+    .search-panel-actions {
+        flex-direction: row;
+        align-items: stretch;
+        grid-column: auto;
+        grid-row: auto;
+        width: 100%;
+    }
+
+    #find-btn {
+        width: auto;
+        flex: 1;
+    }
+}
+
+@media (max-width: 920px) {
+    .search-people-row {
+        grid-template-columns: 1fr;
+    }
+
+    .search-people-row > .input-group:first-child,
+    .search-people-row > .input-group:last-child {
+        grid-column: auto;
+        grid-row: auto;
+    }
+
+    .search-panel-actions {
+        flex-direction: row;
+        align-items: stretch;
+        grid-column: auto;
+        grid-row: auto;
+        width: 100%;
+    }
+
+    #find-btn {
+        width: auto;
+        flex: 1;
     }
 
     .filters {
-        flex-direction: column;
-        gap: 0.8rem;
+        grid-template-columns: 1fr;
     }
 }
